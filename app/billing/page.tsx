@@ -22,7 +22,7 @@ export default async function BillingPage() {
   }
 
   const [company, orders] = await Promise.all([
-    prisma.company.findUnique({ where: { id: session.companyId } }),
+    prisma.company.findUnique({ where: { id: session.companyId! } }),
     prisma.order.findMany({
       where: { companyId: session.companyId },
       orderBy: { createdAt: 'desc' },
