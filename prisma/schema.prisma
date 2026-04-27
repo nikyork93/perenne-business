@@ -1,0 +1,350 @@
+// ════════════════════════════════════════════════════════════════
+// PERENNE BUSINESS — Prisma schema V1
+// Source of truth for all business B2B data.
+// Neon PostgreSQL backend.
+// ════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────
+
+enum UserRole {
+  OWNER       // full access incl. billing, fatturazione, team management
+  ADMIN       // editor + codici + distribuzione (no billing)
+  VIEWER      // read-only
+  SUPERADMIN  // Nicholas / Perenne team — cross-company god mode
+}
+
+enum CodeStatus {
+  AVAILABLE   // generated, not yet claimed
+  CLAIMED     // activated on a device
+  REVOKED     // manually invalidated (audit required)
+}
+
+enum OrderStatus {
+  PENDING     // checkout started but payment not confirmed yet
+  PAID        // Stripe webhook confirmed payment
+  FAILED      // payment declined
+  REFUNDED    // refund issued
+}
+
+enum PackageType {
+  STARTER       // 10 codes
+  TEAM          // 50 codes
+  PRO           // 100 codes
+  ENTERPRISE    // 250 codes
+  SCALE         // custom quantity
+}
+
+enum DistributionStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  COMPLETED
+  FAILED
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  DELIVERED
+  OPENED
+  BOUNCED
+  FAILED
+}
+
+// ─── Core models ────────────────────────────────────────────────
+
+model Company {
+  id                  String   @id @default(cuid())
+  slug                String   @unique                 // url-safe identifier (e.g. "ferrari-spa")
+  name                String
+  legalName           String?                          // official registered name
+  vatNumber           String?                          // P.IVA / VAT ID
+  taxCode             String?                          // codice fiscale IT (optional)
+  address             String?
+  city                String?
+  zipCode             String?
+  country             String?  @default("IT")          // ISO 3166-1 alpha-2
+  sdiCode             String?                          // codice SDI per fatturazione IT
+  pecEmail            String?                          // PEC IT
+
+  // Brand assets
+  logoSymbolUrl       String?                          // r2 url (compact logo)
+  logoExtendedUrl     String?                          // r2 url (extended logo)
+  primaryColor        String?  @default("#1a1a1a")
+
+  // Billing
+  stripeCustomerId    String?  @unique
+
+  // Relations
+  users               User[]
+  coverConfigs        CoverConfig[]
+  coverAssets         CoverAsset[]
+  orders              Order[]
+  notebookCodes       NotebookCode[]
+  distributions       DistributionBatch[]
+  auditLogs           AuditLog[]
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([slug])
+  @@index([stripeCustomerId])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  role         UserRole @default(OWNER)
+
+  // Company association (null for SUPERADMIN)
+  companyId    String?
+  company      Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Session & activation
+  sessions     Session[]
+  magicLinks   MagicLink[]
+
+  // Invite tracking (for team members added by OWNER/ADMIN)
+  invitedByEmail  String?
+  invitedAt       DateTime?
+
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([email])
+  @@index([companyId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  token        String   @unique             // 256-bit random, stored in httpOnly cookie
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  ipAddress    String?
+  userAgent    String?
+
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model MagicLink {
+  id           String   @id @default(cuid())
+  token        String   @unique             // one-time token sent via email
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  usedAt       DateTime?                    // null = still valid
+  expiresAt    DateTime                     // short TTL (15 min)
+  createdAt    DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ─── Cover configuration ────────────────────────────────────────
+
+model CoverConfig {
+  id              String   @id @default(cuid())
+  companyId       String
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Version history: keep all, only one is active
+  version         Int      @default(1)
+  isActive        Boolean  @default(false)
+
+  // The actual editor state
+  backgroundColor String   @default("#1a1a1a")
+  assetsJson      Json                      // array of positioned asset refs
+  quoteText       String?
+  quotePosition   String?  @default("bottom")  // "top" | "center" | "bottom"
+  quoteColor      String?  @default("#ffffff")
+
+  // Preview rendered from editor (for quick reference in UI and emails)
+  previewPngUrl   String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, isActive])
+}
+
+model CoverAsset {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  name        String                           // original filename
+  r2Key       String                           // path in R2 bucket
+  r2Url       String                           // public URL (assets.perenne.app/...)
+  mimeType    String
+  sizeBytes   Int
+  width       Int?
+  height      Int?
+
+  createdAt   DateTime @default(now())
+
+  @@index([companyId])
+}
+
+// ─── Orders & codes ─────────────────────────────────────────────
+
+model Order {
+  id                     String       @id @default(cuid())
+  companyId              String
+  company                Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  packageType            PackageType
+  quantity               Int                        // number of codes in this order
+  unitPriceCents         Int                        // price per code in cents (EUR)
+  totalPriceCents        Int                        // total including any VAT
+  taxCents               Int          @default(0)
+  currency               String       @default("EUR")
+
+  stripePaymentIntentId  String?      @unique
+  stripeInvoiceId        String?                    // for PDF invoice download
+  stripeInvoiceUrl       String?
+
+  status                 OrderStatus  @default(PENDING)
+  paidAt                 DateTime?
+  refundedAt             DateTime?
+
+  notebookCodes          NotebookCode[]
+
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  @@index([companyId])
+  @@index([stripePaymentIntentId])
+  @@index([status])
+}
+
+model NotebookCode {
+  id                String       @id @default(cuid())
+  code              String       @unique          // PRN-XXXX-XXXX-XXXX format
+  companyId         String
+  company           Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  orderId           String
+  order             Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  status            CodeStatus   @default(AVAILABLE)
+
+  // Activation
+  claimedAt         DateTime?
+  claimedDeviceId   String?                        // iOS identifierForVendor
+  claimedIpAddress  String?
+
+  // Distribution target (if assigned before claiming)
+  assignedToEmail   String?
+  assignedToName    String?
+  distributionId    String?
+  distribution      DistributionBatch? @relation(fields: [distributionId], references: [id], onDelete: SetNull)
+
+  emailLogs         EmailLog[]
+
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([code])
+  @@index([companyId])
+  @@index([orderId])
+  @@index([status])
+  @@index([distributionId])
+}
+
+// ─── Distribution & email ───────────────────────────────────────
+
+model DistributionBatch {
+  id                String              @id @default(cuid())
+  companyId         String
+  company           Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  fileName          String?                          // original CSV filename
+  totalRecipients   Int                 @default(0)
+  sentCount         Int                 @default(0)
+  failedCount       Int                 @default(0)
+  status            DistributionStatus  @default(DRAFT)
+
+  emailSubject      String?
+  emailBody         String?             @db.Text
+
+  codes             NotebookCode[]
+  emailLogs         EmailLog[]
+
+  scheduledAt       DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([companyId])
+  @@index([status])
+}
+
+model EmailLog {
+  id                String       @id @default(cuid())
+  batchId           String?
+  batch             DistributionBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  codeId            String?
+  code              NotebookCode? @relation(fields: [codeId], references: [id], onDelete: SetNull)
+
+  recipientEmail    String
+  recipientName     String?
+  status            EmailStatus  @default(PENDING)
+
+  resendId          String?                     // provider message id for tracking
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  openedAt          DateTime?
+  bouncedAt         DateTime?
+  errorMessage      String?
+
+  createdAt         DateTime     @default(now())
+
+  @@index([batchId])
+  @@index([codeId])
+  @@index([recipientEmail])
+  @@index([status])
+}
+
+// ─── Audit log (security & debugging) ───────────────────────────
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  actorEmail  String                      // who performed the action
+  actorRole   UserRole
+  action      String                      // "company.created", "code.revoked", "cover.saved", ...
+  targetType  String?                     // "Company" | "Order" | "NotebookCode" | ...
+  targetId    String?
+  metadata    Json?                       // free-form context
+
+  ipAddress   String?
+  userAgent   String?
+
+  createdAt   DateTime @default(now())
+
+  @@index([companyId])
+  @@index([actorEmail])
+  @@index([action])
+  @@index([createdAt])
+}
