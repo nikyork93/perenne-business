@@ -115,7 +115,6 @@ export async function POST(req: NextRequest) {
     await tx.magicLink.create({
       data: {
         token,
-        email: user.email,
         userId: user.id,
         expiresAt,
       },
