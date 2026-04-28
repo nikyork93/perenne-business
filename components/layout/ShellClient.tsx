@@ -41,22 +41,37 @@ export function ShellClient({ user, children }: ShellClientProps) {
   const isSuperAdmin = user?.role === 'SUPERADMIN';
 
   return (
-    <div className="min-h-screen bg-ink-bg text-ink relative overflow-x-hidden">
-      <div
-        className="fixed inset-0 opacity-25 pointer-events-none -z-10"
-        style={{
-          background:
-            'radial-gradient(circle at 20% 30%, rgba(74,122,140,0.18) 0%, transparent 50%), radial-gradient(circle at 80% 70%, rgba(44,88,104,0.14) 0%, transparent 50%)',
-        }}
-      />
-
+    <div
+      className="min-h-screen text-ink relative overflow-x-hidden"
+      style={{
+        // Rich layered background — base color + ambient glows.
+        // This is what shows through the liquid-glass panels.
+        background: `
+          radial-gradient(ellipse 80% 60% at 15% 20%, rgba(74,122,140,0.25) 0%, transparent 60%),
+          radial-gradient(ellipse 70% 50% at 85% 80%, rgba(44,88,104,0.20) 0%, transparent 60%),
+          radial-gradient(ellipse 50% 40% at 50% 50%, rgba(90,146,168,0.08) 0%, transparent 60%),
+          linear-gradient(180deg, #0a0a0f 0%, #0f0f15 100%)
+        `,
+      }}
+    >
+      {/* ─── Sidebar (desktop) + drawer (mobile) ─── */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 w-64 border-r border-glass-border bg-glass-base backdrop-blur-2xl backdrop-saturate-180 flex-col transition-transform duration-200 ease-out ${
+        className={`fixed inset-y-0 left-0 z-30 w-64 flex-col transition-transform duration-200 ease-out ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         } md:translate-x-0 md:flex flex`}
+        style={{
+          background: 'rgba(15, 15, 20, 0.55)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
+        }}
       >
         <div className="flex items-center justify-between p-6 border-b border-glass-border">
-          <Link href="/dashboard" className="text-ink hover:text-ink transition" onClick={() => setMobileOpen(false)}>
+          <Link
+            href="/dashboard"
+            className="text-ink hover:text-ink transition"
+            onClick={() => setMobileOpen(false)}
+          >
             <PerenneLogo variant="extended" height={22} />
           </Link>
           <button
@@ -71,14 +86,12 @@ export function ShellClient({ user, children }: ShellClientProps) {
 
         <nav className="flex-1 overflow-y-auto p-4 space-y-6">
           <NavSection items={MAIN_NAV} pathname={pathname} onNav={() => setMobileOpen(false)} />
-
           <NavSection
             title="Workspace"
             items={SETTINGS_NAV}
             pathname={pathname}
             onNav={() => setMobileOpen(false)}
           />
-
           {isSuperAdmin && (
             <NavSection
               title="Superadmin"
@@ -90,7 +103,13 @@ export function ShellClient({ user, children }: ShellClientProps) {
         </nav>
 
         <div className="p-4 border-t border-glass-border">
-          <div className="rounded-2xl border border-glass-border bg-white/[0.03] p-3">
+          <div
+            className="rounded-2xl p-3"
+            style={{
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+            }}
+          >
             <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-1">
               {isSuperAdmin ? 'Superadmin' : (user?.role || 'User')}
             </div>
@@ -107,7 +126,16 @@ export function ShellClient({ user, children }: ShellClientProps) {
         </div>
       </aside>
 
-      <header className="md:hidden sticky top-0 z-20 flex items-center justify-between px-4 py-3 border-b border-glass-border bg-glass-base backdrop-blur-2xl">
+      {/* ─── Mobile top bar ─── */}
+      <header
+        className="md:hidden sticky top-0 z-20 flex items-center justify-between px-4 py-3"
+        style={{
+          background: 'rgba(15, 15, 20, 0.55)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+        }}
+      >
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -120,6 +148,7 @@ export function ShellClient({ user, children }: ShellClientProps) {
         <div className="w-6" />
       </header>
 
+      {/* ─── Main content ─── */}
       <main className="md:pl-64 min-h-screen">
         <div className="max-w-7xl mx-auto p-6 md:p-10">{children}</div>
       </main>

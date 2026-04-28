@@ -17,8 +17,6 @@ export interface Session {
   companyId: string | null;
 }
 
-// ─── Token gen ─────────────────────────────────────────────────────
-
 function generateRandomToken(): string {
   return randomBytes(32).toString('base64url');
 }
@@ -42,11 +40,7 @@ export async function createMagicLink(email: string): Promise<string> {
   }
 
   await prisma.magicLink.create({
-    data: {
-      token,
-      userId: user.id,
-      expiresAt,
-    },
+    data: { token, userId: user.id, expiresAt },
   });
 
   return `${env.NEXT_PUBLIC_APP_URL}/api/auth/verify?token=${token}`;
@@ -73,10 +67,12 @@ export async function consumeMagicLink(token: string): Promise<{
     data: { usedAt: new Date() },
   });
 
-  await prisma.user.update({
-    where: { id: magicLink.user.id },
-    data: { lastLoginAt: new Date() },
-  });
+  await prisma.user
+    .update({
+      where: { id: magicLink.user.id },
+      data: { lastLoginAt: new Date() },
+    })
+    .catch(() => {});
 
   return {
     userId: magicLink.user.id,
@@ -91,8 +87,7 @@ export async function consumeMagicLink(token: string): Promise<{
 
 /**
  * Creates a session for a user and sets the cookie.
- * Generates a random token (separate from session.id) used both as DB token
- * and as cookie value. Returns the token.
+ * Generates a random token used both as DB token and cookie value.
  */
 export async function createSession(userId: string): Promise<string> {
   const sessionToken = generateRandomToken();
@@ -117,30 +112,46 @@ export async function createSession(userId: string): Promise<string> {
   return sessionToken;
 }
 
+/**
+ * Reads session from cookie and validates it against DB.
+ * Uses findFirst (works regardless of whether `token` is @unique in schema).
+ * Logs errors to help diagnose silent failures.
+ */
 export async function getSession(): Promise<Session | null> {
-  const cookieStore = await cookies();
-  const cookie = cookieStore.get(SESSION_COOKIE);
-  if (!cookie?.value) return null;
+  try {
+    const cookieStore = await cookies();
+    const cookie = cookieStore.get(SESSION_COOKIE);
+    if (!cookie?.value) {
+      return null;
+    }
 
-  // Look up by token (not id) — the cookie contains the random token
-  const session = await prisma.session.findUnique({
-    where: { token: cookie.value },
-    include: { user: true },
-  });
+    const session = await prisma.session.findFirst({
+      where: { token: cookie.value },
+      include: { user: true },
+    });
 
-  if (!session) return null;
-  if (session.expiresAt < new Date()) {
-    await prisma.session.delete({ where: { id: session.id } }).catch(() => {});
+    if (!session) {
+      console.log('[getSession] Cookie present but no matching session in DB');
+      return null;
+    }
+
+    if (session.expiresAt < new Date()) {
+      console.log('[getSession] Session expired, removing');
+      await prisma.session.delete({ where: { id: session.id } }).catch(() => {});
+      return null;
+    }
+
+    return {
+      userId: session.user.id,
+      email: session.user.email,
+      name: session.user.name,
+      role: session.user.role,
+      companyId: session.user.companyId,
+    };
+  } catch (err) {
+    console.error('[getSession] Error reading session:', err);
     return null;
   }
-
-  return {
-    userId: session.user.id,
-    email: session.user.email,
-    name: session.user.name,
-    role: session.user.role,
-    companyId: session.user.companyId,
-  };
 }
 
 export async function requireSession(): Promise<Session> {
@@ -165,7 +176,10 @@ export async function destroySession(): Promise<void> {
   const cookie = cookieStore.get(SESSION_COOKIE);
 
   if (cookie?.value) {
-    await prisma.session.delete({ where: { token: cookie.value } }).catch(() => {});
+    // deleteMany works whether token is @unique or not
+    await prisma.session
+      .deleteMany({ where: { token: cookie.value } })
+      .catch(() => {});
   }
 
   cookieStore.set(SESSION_COOKIE, '', {
