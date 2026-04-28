@@ -2,190 +2,183 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
-import { cn } from '@/lib/cn';
+import { useState, type ReactNode } from 'react';
 import { PerenneLogo } from '@/components/layout/PerenneLogo';
 
+// ─── Navigation definitions ─────────────────────────────────────────
+
+const MAIN_NAV = [
+  { href: '/dashboard', label: 'Dashboard' },
+  { href: '/cover', label: 'Cover' },
+  { href: '/codes', label: 'Codes' },
+  { href: '/distribution', label: 'Distribution' },
+  { href: '/store', label: 'Store' },
+  { href: '/billing', label: 'Billing' },
+];
+
+const SETTINGS_NAV = [
+  { href: '/team', label: 'Team' },
+  { href: '/settings', label: 'Settings' },
+];
+
+const ADMIN_NAV = [
+  { href: '/admin/companies', label: 'Companies' },
+  { href: '/admin/revenue', label: 'Revenue' },
+  { href: '/admin/audit', label: 'Audit log' },
+];
+
 interface ShellProps {
-  children: React.ReactNode;
-  companyName?: string;
-  userEmail: string;
-  isSuperAdmin?: boolean;
+  user: {
+    email: string;
+    name: string | null;
+    role: string;
+    companyId: string | null;
+  };
+  children: ReactNode;
 }
 
-interface NavItem {
-  label: string;
-  href: string;
-  icon?: string;
-  badge?: string;
-}
-
-const MAIN_NAV: NavItem[] = [
-  { label: 'Dashboard', href: '/dashboard' },
-  { label: 'Cover Editor', href: '/cover' },
-  { label: 'Store', href: '/store' },
-  { label: 'Codes', href: '/codes' },
-  { label: 'Distribution', href: '/distribution' },
-  { label: 'Billing', href: '/billing' },
-];
-
-const SETTINGS_NAV: NavItem[] = [
-  { label: 'Company', href: '/settings' },
-  { label: 'Team', href: '/team' },
-];
-
-const ADMIN_NAV: NavItem[] = [
-  { label: 'Companies', href: '/admin/companies' },
-  { label: 'Revenue', href: '/admin/revenue' },
-  { label: 'Audit Log', href: '/admin/audit' },
-];
-
-export function Shell({ children, companyName, userEmail, isSuperAdmin }: ShellProps) {
+export function Shell({ user, children }: ShellProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  const isActive = (href: string) => {
-    if (href === '/dashboard') return pathname === '/dashboard';
-    return pathname.startsWith(href);
-  };
-
-  async function handleLogout() {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (err) {
-      console.error('Logout failed', err);
-    }
-    window.location.href = '/login';
-  }
+  const isSuperAdmin = user.role === 'SUPERADMIN';
 
   return (
-    <div className="min-h-screen bg-ink-bg flex">
-      {/* mobile menu toggle */}
-      <button
-        type="button"
-        onClick={() => setMobileOpen(!mobileOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 w-9 h-9 rounded-lg border border-glass-border bg-glass-base/80 backdrop-blur flex items-center justify-center text-ink hover:bg-white/[0.06]"
-        aria-label="Toggle navigation"
-      >
-        <span className="text-lg leading-none">{mobileOpen ? '×' : '☰'}</span>
-      </button>
+    <div className="min-h-screen bg-ink-bg text-ink relative overflow-x-hidden">
+      {/* Ambient background glow */}
+      <div
+        className="fixed inset-0 opacity-25 pointer-events-none -z-10"
+        style={{
+          background:
+            'radial-gradient(circle at 20% 30%, rgba(74,122,140,0.18) 0%, transparent 50%), radial-gradient(circle at 80% 70%, rgba(44,88,104,0.14) 0%, transparent 50%)',
+        }}
+      />
 
-      {/* Sidebar */}
+      {/* ─── Sidebar (desktop) + drawer (mobile) ─── */}
       <aside
-        className={cn(
-          'fixed lg:static lg:translate-x-0 inset-y-0 left-0 w-64 bg-glass-base/40 border-r border-glass-border backdrop-blur-xl z-40 transition-transform duration-200 flex flex-col',
+        className={`fixed inset-y-0 left-0 z-30 w-64 border-r border-glass-border bg-glass-base backdrop-blur-2xl backdrop-saturate-180 flex-col transition-transform duration-200 ease-out ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        )}
+        } md:translate-x-0 md:flex flex`}
       >
-        {/* Logo */}
-        <div className="p-5 border-b border-glass-border">
-          <Link href="/dashboard" className="block text-ink hover:text-accent transition-colors">
+        <div className="flex items-center justify-between p-6 border-b border-glass-border">
+          <Link href="/dashboard" className="text-ink hover:text-ink transition" onClick={() => setMobileOpen(false)}>
             <PerenneLogo variant="extended" height={22} />
           </Link>
-          <div className="mt-2 text-[10px] font-mono text-ink-faint uppercase tracking-wider">
-            Business
-          </div>
+          <button
+            type="button"
+            onClick={() => setMobileOpen(false)}
+            className="md:hidden text-ink-faint hover:text-ink text-xl leading-none px-2"
+            aria-label="Close menu"
+          >
+            ×
+          </button>
         </div>
 
-        {/* Company badge */}
-        {companyName && (
-          <div className="px-5 py-3 border-b border-glass-border">
-            <div className="text-[10px] font-mono text-ink-faint uppercase tracking-wider mb-1">
-              Company
-            </div>
-            <div className="text-sm font-display italic text-ink truncate">
-              {companyName}
-            </div>
-          </div>
-        )}
+        <nav className="flex-1 overflow-y-auto p-4 space-y-6">
+          {/* MAIN NAV — always shown for everyone */}
+          <NavSection items={MAIN_NAV} pathname={pathname} onNav={() => setMobileOpen(false)} />
 
-        {/* Main nav */}
-        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
-          {!isSuperAdmin || pathname.startsWith('/admin') === false ? (
-            <>
-              <NavSection items={MAIN_NAV} pathname={pathname} isActive={isActive} onClick={() => setMobileOpen(false)} />
-              <NavSection title="Settings" items={SETTINGS_NAV} pathname={pathname} isActive={isActive} onClick={() => setMobileOpen(false)} />
-            </>
-          ) : null}
+          {/* SETTINGS NAV — always shown for everyone */}
+          <NavSection
+            title="Workspace"
+            items={SETTINGS_NAV}
+            pathname={pathname}
+            onNav={() => setMobileOpen(false)}
+          />
 
+          {/* ADMIN NAV — shown ONLY if user is superadmin */}
           {isSuperAdmin && (
-            <NavSection title="Superadmin" items={ADMIN_NAV} pathname={pathname} isActive={isActive} onClick={() => setMobileOpen(false)} />
+            <NavSection
+              title="Superadmin"
+              items={ADMIN_NAV}
+              pathname={pathname}
+              onNav={() => setMobileOpen(false)}
+            />
           )}
         </nav>
 
-        {/* Footer / user */}
-        <div className="p-3 border-t border-glass-border">
-          <div className="px-2 py-2 mb-1">
-            <div className="text-[10px] font-mono text-ink-faint uppercase tracking-wider mb-1">
-              Signed in
+        {/* User pill */}
+        <div className="p-4 border-t border-glass-border">
+          <div className="rounded-2xl border border-glass-border bg-white/[0.03] p-3">
+            <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-1">
+              {isSuperAdmin ? 'Superadmin' : user.role}
             </div>
-            <div className="text-[11px] text-ink-dim truncate">{userEmail}</div>
+            <div className="text-xs text-ink truncate" title={user.email}>
+              {user.name || user.email}
+            </div>
+            <Link
+              href="/api/auth/logout"
+              className="block mt-2 text-[11px] text-ink-faint hover:text-ink transition font-mono"
+            >
+              Sign out →
+            </Link>
           </div>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="w-full text-left px-3 py-2 text-[11px] font-mono text-ink-faint hover:text-ink hover:bg-white/[0.04] rounded-md transition"
-          >
-            Sign out →
-          </button>
         </div>
       </aside>
 
-      {/* Backdrop on mobile */}
+      {/* ─── Mobile top bar ─── */}
+      <header className="md:hidden sticky top-0 z-20 flex items-center justify-between px-4 py-3 border-b border-glass-border bg-glass-base backdrop-blur-2xl">
+        <button
+          type="button"
+          onClick={() => setMobileOpen(true)}
+          className="text-ink-dim hover:text-ink text-xl"
+          aria-label="Open menu"
+        >
+          ☰
+        </button>
+        <PerenneLogo variant="extended" height={18} />
+        <div className="w-6" />
+      </header>
+
+      {/* ─── Main content ─── */}
+      <main className="md:pl-64 min-h-screen">
+        <div className="max-w-7xl mx-auto p-6 md:p-10">{children}</div>
+      </main>
+
+      {/* Backdrop for mobile drawer */}
       {mobileOpen && (
         <div
+          className="md:hidden fixed inset-0 z-20 bg-black/50 backdrop-blur-sm"
           onClick={() => setMobileOpen(false)}
-          className="lg:hidden fixed inset-0 bg-black/40 z-30"
         />
       )}
-
-      {/* Main */}
-      <main className="flex-1 lg:ml-0 px-6 py-8 lg:px-10 lg:py-10 overflow-x-auto">
-        {children}
-      </main>
     </div>
   );
 }
 
-function NavSection({
-  title,
-  items,
-  pathname,
-  isActive,
-  onClick,
-}: {
+// ─── Helper components ──────────────────────────────────────────────
+
+interface NavSectionProps {
   title?: string;
-  items: NavItem[];
+  items: { href: string; label: string }[];
   pathname: string;
-  isActive: (href: string) => boolean;
-  onClick: () => void;
-}) {
+  onNav: () => void;
+}
+
+function NavSection({ title, items, pathname, onNav }: NavSectionProps) {
   return (
     <div>
       {title && (
-        <div className="px-3 mb-2 text-[10px] font-mono text-ink-faint uppercase tracking-wider">
+        <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase px-3 mb-2">
           {title}
         </div>
       )}
       <ul className="space-y-0.5">
         {items.map((item) => {
-          const active = isActive(item.href);
+          const active =
+            pathname === item.href ||
+            (item.href !== '/dashboard' && pathname.startsWith(item.href + '/'));
           return (
             <li key={item.href}>
               <Link
                 href={item.href}
-                onClick={onClick}
-                className={cn(
-                  'flex items-center px-3 py-2 text-xs rounded-md transition',
+                onClick={onNav}
+                className={`block px-3 py-2 rounded-xl text-sm transition-all ${
                   active
-                    ? 'bg-white/[0.07] text-ink font-medium'
-                    : 'text-ink-dim hover:text-ink hover:bg-white/[0.04]'
-                )}
+                    ? 'bg-accent-soft text-ink border border-accent/30'
+                    : 'text-ink-dim hover:text-ink hover:bg-white/[0.04] border border-transparent'
+                }`}
               >
                 {item.label}
-                {item.badge && (
-                  <span className="ml-auto text-[10px] font-mono text-accent">{item.badge}</span>
-                )}
               </Link>
             </li>
           );

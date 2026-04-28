@@ -1,39 +1,74 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
-import { GlassPanel } from '../ui/GlassPanel';
 
 interface StatProps {
-  /** Short label above the value */
   label: string;
-  /** Main metric (number, currency, etc.) */
   value: ReactNode;
-  /** Sub-text below the value (context, comparison) */
-  hint?: ReactNode;
-  /** Optional trend indicator: "+12%" green, "-3%" red */
-  delta?: { value: string; positive?: boolean };
+  hint?: string;
+  trend?: {
+    direction: 'up' | 'down' | 'flat';
+    value: string;
+  };
+  size?: 'sm' | 'md' | 'lg';
   className?: string;
 }
 
-export function Stat({ label, value, hint, delta, className }: StatProps) {
+/**
+ * Stat card. Values are rendered in Geist Mono (highly readable for numbers,
+ * NOT italic). Only page H1 titles use Fraunces italic. Labels use mono uppercase.
+ */
+export function Stat({
+  label,
+  value,
+  hint,
+  trend,
+  size = 'md',
+  className,
+}: StatProps) {
   return (
-    <GlassPanel padding="md" className={cn('min-w-0', className)}>
-      <div className="label mb-2">{label}</div>
-      <div className="font-display italic text-[38px] leading-none text-ink tracking-tight">
+    <div
+      className={cn(
+        'rounded-2xl border border-glass-border bg-glass-base backdrop-blur-2xl backdrop-saturate-180 p-5 shadow-glass-sm',
+        className
+      )}
+    >
+      <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
+        {label}
+      </div>
+
+      <div
+        className={cn(
+          'font-mono text-ink tabular-nums tracking-tight',
+          size === 'sm' && 'text-2xl',
+          size === 'md' && 'text-3xl',
+          size === 'lg' && 'text-4xl'
+        )}
+      >
         {value}
       </div>
-      <div className="mt-3 flex items-center gap-2 text-[11px]">
-        {delta && (
-          <span
-            className={cn(
-              'font-mono',
-              delta.positive ? 'text-emerald-300' : 'text-[#ff9a9a]'
-            )}
-          >
-            {delta.positive ? '▲' : '▼'} {delta.value}
-          </span>
-        )}
-        {hint && <span className="text-ink-faint">{hint}</span>}
-      </div>
-    </GlassPanel>
+
+      {(hint || trend) && (
+        <div className="mt-2 flex items-center gap-2">
+          {trend && (
+            <span
+              className={cn(
+                'inline-flex items-center gap-0.5 text-[11px] font-mono',
+                trend.direction === 'up' && 'text-success',
+                trend.direction === 'down' && 'text-danger',
+                trend.direction === 'flat' && 'text-ink-faint'
+              )}
+            >
+              {trend.direction === 'up' && '▲'}
+              {trend.direction === 'down' && '▼'}
+              {trend.direction === 'flat' && '━'}
+              {trend.value}
+            </span>
+          )}
+          {hint && (
+            <span className="text-[11px] font-sans text-ink-faint">{hint}</span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

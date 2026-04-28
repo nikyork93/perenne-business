@@ -40,10 +40,10 @@ export default function LoginPage() {
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-ink-bg relative overflow-hidden">
       <div
-        className="absolute inset-0 opacity-30 pointer-events-none"
+        className="absolute inset-0 opacity-40 pointer-events-none"
         style={{
           background:
-            'radial-gradient(circle at 30% 40%, rgba(74,122,140,0.18) 0%, transparent 50%), radial-gradient(circle at 70% 60%, rgba(44,88,104,0.18) 0%, transparent 50%)',
+            'radial-gradient(circle at 20% 30%, rgba(74,122,140,0.25) 0%, transparent 50%), radial-gradient(circle at 80% 70%, rgba(44,88,104,0.20) 0%, transparent 50%)',
         }}
       />
 
@@ -54,7 +54,7 @@ export default function LoginPage() {
           </div>
         </Link>
 
-        <div className="rounded-3xl border border-glass-border bg-glass-base/50 backdrop-blur-2xl p-8 shadow-glass-lg">
+        <div className="rounded-3xl border border-glass-border bg-glass-base backdrop-blur-2xl backdrop-saturate-180 p-8 shadow-glass-lg">
           <div className="mb-6 text-center">
             <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
               Business portal
@@ -72,7 +72,7 @@ export default function LoginPage() {
               <div className="py-3 px-4 rounded-2xl text-[11px] font-mono border bg-emerald-400/5 border-emerald-400/20 text-emerald-200 text-center">
                 ✓ {message}
               </div>
-              <p className="text-[11px] text-ink-faint text-center leading-relaxed">
+              <p className="text-[11px] text-ink-faint text-center leading-relaxed font-sans">
                 The link expires in 15 minutes. You can close this tab.
               </p>
             </div>
@@ -86,7 +86,7 @@ export default function LoginPage() {
                 required
                 autoFocus
                 disabled={status === 'sending'}
-                className="w-full px-4 py-3 rounded-2xl bg-white/[0.04] border border-glass-border text-ink text-sm placeholder-ink-faint focus:outline-none focus:border-accent/50 focus:bg-white/[0.06] transition-all disabled:opacity-50"
+                className="w-full px-4 py-3 rounded-2xl bg-white/[0.04] border border-glass-border text-ink text-sm font-sans placeholder-ink-faint focus:outline-none focus:border-accent/50 focus:bg-white/[0.06] transition-all disabled:opacity-50"
               />
 
               {status === 'error' && (
@@ -98,7 +98,7 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={status === 'sending' || !email.trim()}
-                className="w-full px-5 py-3 rounded-2xl bg-accent text-white text-sm font-medium tracking-wide hover:bg-accent-bright transition-all duration-200 shadow-lg shadow-accent/20 hover:shadow-accent/30 hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
+                className="w-full px-5 py-3 rounded-2xl bg-accent text-white text-sm font-medium tracking-wide hover:bg-accent-bright transition-all duration-200 shadow-accent-glow hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
               >
                 {status === 'sending' ? 'Sending…' : 'Send sign-in link →'}
               </button>

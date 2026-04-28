@@ -14,7 +14,7 @@ const config: Config = {
         mono: ['"Geist Mono"', 'ui-monospace', 'monospace'],
       },
       colors: {
-        // Background layers
+        // Background layers (deep neutral)
         'ink-bg': '#0a0a0f',
         'ink-bg-2': '#101015',
 
@@ -23,10 +23,12 @@ const config: Config = {
         'ink-dim': '#a1a1aa',
         'ink-faint': '#71717a',
 
-        // Liquid glass surface (cool dark)
-        // glass-base is the new canonical name, glass-bg kept as alias for legacy CSS
-        'glass-base': '#18181b',
-        'glass-bg': '#18181b',
+        // ─── LIQUID GLASS (true transparency, not opaque) ───
+        // Use rgba so backdrop-blur shows through with real glass feel.
+        // glass-base = canonical; glass-bg = legacy alias for globals.css.
+        'glass-base': 'rgba(20, 20, 25, 0.4)',
+        'glass-bg': 'rgba(20, 20, 25, 0.4)',
+        'glass-elevated': 'rgba(28, 28, 35, 0.55)',
         'glass-border': 'rgba(255, 255, 255, 0.08)',
         'glass-hairline': 'rgba(255, 255, 255, 0.14)',
 
@@ -36,7 +38,7 @@ const config: Config = {
         'accent-dim': '#3a5f6e',
         'accent-soft': 'rgba(74, 122, 140, 0.15)',
 
-        // Semantic states
+        // Semantic
         success: '#34c77c',
         warning: '#ffb340',
         danger: '#ff5e5e',
@@ -56,6 +58,13 @@ const config: Config = {
           '0 10px 30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08)',
         'accent-glow':
           '0 8px 24px rgba(74, 122, 140, 0.3), inset 0 1px 0 rgba(255,255,255,0.15)',
+      },
+      backdropBlur: {
+        '2xl': '40px',
+        '3xl': '64px',
+      },
+      backdropSaturate: {
+        180: '1.8',
       },
     },
   },

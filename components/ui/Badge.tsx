@@ -1,31 +1,31 @@
-import type { HTMLAttributes } from 'react';
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
-type BadgeTone = 'neutral' | 'success' | 'warning' | 'danger' | 'accent' | 'info';
+type BadgeTone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info';
 
-interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
+interface BadgeProps {
   tone?: BadgeTone;
+  children: ReactNode;
+  className?: string;
 }
 
-const toneClasses: Record<BadgeTone, string> = {
-  neutral: 'bg-white/[0.06] border-glass-border text-ink-dim',
-  success: 'bg-emerald-400/10 border-emerald-400/30 text-emerald-300',
-  warning: 'bg-amber-400/10 border-amber-400/30 text-amber-300',
-  danger:  'bg-danger/10 border-danger/30 text-[#ff9a9a]',
-  accent:  'bg-accent/10 border-accent/30 text-accent',
-  info:    'bg-sky-400/10 border-sky-400/30 text-sky-300',
-};
-
-export function Badge({ className, tone = 'neutral', children, ...props }: BadgeProps) {
+/**
+ * Inline status badge. Uses Geist Sans, NOT italic.
+ * Italic Fraunces is reserved for page H1 titles only.
+ */
+export function Badge({ tone = 'neutral', children, className }: BadgeProps) {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5',
-        'text-[10px] font-medium tracking-[0.05em] uppercase',
-        toneClasses[tone],
+        'inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-widest border',
+        tone === 'neutral' && 'border-glass-border bg-white/[0.04] text-ink-dim',
+        tone === 'accent' && 'border-accent/30 bg-accent-soft text-accent-bright',
+        tone === 'success' && 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200',
+        tone === 'warning' && 'border-amber-400/20 bg-amber-400/10 text-amber-200',
+        tone === 'danger' && 'border-red-400/20 bg-red-400/10 text-red-200',
+        tone === 'info' && 'border-sky-400/20 bg-sky-400/10 text-sky-200',
         className
       )}
-      {...props}
     >
       {children}
     </span>

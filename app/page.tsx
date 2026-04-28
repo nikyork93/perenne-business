@@ -5,10 +5,10 @@ export default function LandingPage() {
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-ink-bg relative overflow-hidden">
       <div
-        className="absolute inset-0 opacity-30 pointer-events-none"
+        className="absolute inset-0 opacity-40 pointer-events-none"
         style={{
           background:
-            'radial-gradient(circle at 30% 40%, rgba(74,122,140,0.18) 0%, transparent 50%), radial-gradient(circle at 70% 60%, rgba(44,88,104,0.18) 0%, transparent 50%)',
+            'radial-gradient(circle at 20% 30%, rgba(74,122,140,0.25) 0%, transparent 50%), radial-gradient(circle at 80% 70%, rgba(44,88,104,0.20) 0%, transparent 50%)',
         }}
       />
 
@@ -17,7 +17,7 @@ export default function LandingPage() {
           <PerenneLogo variant="extended" height={42} />
         </div>
 
-        <div className="w-full rounded-3xl border border-glass-border bg-glass-base/50 backdrop-blur-2xl p-10 shadow-glass-lg">
+        <div className="w-full rounded-3xl border border-glass-border bg-glass-base backdrop-blur-2xl backdrop-saturate-180 p-10 shadow-glass-lg">
           <div className="text-center">
             <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-3">
               Business portal
@@ -32,7 +32,7 @@ export default function LandingPage() {
 
             <Link
               href="/login"
-              className="inline-flex items-center justify-center px-7 py-3 rounded-2xl bg-accent text-white text-sm font-medium tracking-wide hover:bg-accent-bright transition-all duration-200 shadow-lg shadow-accent/20 hover:shadow-accent/30 hover:-translate-y-0.5"
+              className="inline-flex items-center justify-center px-7 py-3 rounded-2xl bg-accent text-white text-sm font-medium tracking-wide hover:bg-accent-bright transition-all duration-200 shadow-accent-glow hover:-translate-y-0.5"
             >
               Sign in →
             </Link>
