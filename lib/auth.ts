@@ -179,3 +179,35 @@ export async function destroySession(): Promise<void> {
     maxAge: 0,
   });
 }
+
+// ─── Backward-compat exports ────────────────────────────────────────
+
+export async function requireRole(allowedRoles: UserRole | UserRole[]): Promise<Session> {
+  const session = await requireSession();
+  const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
+  if (!roles.includes(session.role)) {
+    redirect('/dashboard');
+  }
+  return session;
+}
+
+export async function createSession(userId: string): Promise<string> {
+  const session = await prisma.session.create({
+    data: {
+      userId,
+      expiresAt: new Date(Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000),
+    },
+  });
+
+  const signedToken = signSessionToken(session.id);
+  const cookieStore = await cookies();
+  cookieStore.set(SESSION_COOKIE, signedToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
+  });
+
+  return signedToken;
+}
