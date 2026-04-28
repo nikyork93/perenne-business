@@ -33,19 +33,24 @@ interface ShellProps {
 }
 
 /**
- * App shell with sidebar navigation. Same prop signature as the original:
- *   <Shell userEmail={...} isSuperAdmin={...} companyName={...}>
+ * App shell with sidebar navigation. Same prop signature as the original.
  *
- * IMPORTANT: logout is rendered as a <button> with explicit POST,
- * NOT as a <Link>, because Next.js auto-prefetches all visible Links
- * on render. A prefetched GET to /api/auth/logout would silently log
- * the user out on every page load.
+ * Nav visibility logic:
+ * - MAIN_NAV + SETTINGS_NAV (Dashboard, Cover, Codes, etc): shown only when
+ *   user has a company. Owners always have one. Superadmins may not.
+ * - ADMIN_NAV (Companies, Revenue, Audit): shown only to superadmins.
+ *
+ * Logout uses a <button> (not <Link>) to avoid Next.js auto-prefetch
+ * triggering a silent logout.
  */
 export function Shell({ children, userEmail, isSuperAdmin, companyName }: ShellProps) {
   const pathname = usePathname() || '/';
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+
+  // companyName presence is the proxy for "user has a company associated".
+  const hasCompany = Boolean(companyName);
 
   async function handleSignOut() {
     setSigningOut(true);
@@ -83,7 +88,7 @@ export function Shell({ children, userEmail, isSuperAdmin, companyName }: ShellP
       >
         <div className="flex items-center justify-between p-6 border-b border-glass-border">
           <Link
-            href="/dashboard"
+            href={hasCompany ? '/dashboard' : '/admin/companies'}
             className="text-ink hover:text-ink transition"
             onClick={() => setMobileOpen(false)}
           >
@@ -100,13 +105,24 @@ export function Shell({ children, userEmail, isSuperAdmin, companyName }: ShellP
         </div>
 
         <nav className="flex-1 overflow-y-auto p-4 space-y-6">
-          <NavSection items={MAIN_NAV} pathname={pathname} onNav={() => setMobileOpen(false)} />
-          <NavSection
-            title="Workspace"
-            items={SETTINGS_NAV}
-            pathname={pathname}
-            onNav={() => setMobileOpen(false)}
-          />
+          {/* Company-scoped nav: only when user actually has a company */}
+          {hasCompany && (
+            <>
+              <NavSection
+                items={MAIN_NAV}
+                pathname={pathname}
+                onNav={() => setMobileOpen(false)}
+              />
+              <NavSection
+                title="Workspace"
+                items={SETTINGS_NAV}
+                pathname={pathname}
+                onNav={() => setMobileOpen(false)}
+              />
+            </>
+          )}
+
+          {/* Admin-only nav for superadmins */}
           {isSuperAdmin && (
             <NavSection
               title="Superadmin"
@@ -114,6 +130,22 @@ export function Shell({ children, userEmail, isSuperAdmin, companyName }: ShellP
               pathname={pathname}
               onNav={() => setMobileOpen(false)}
             />
+          )}
+
+          {/* Hint when superadmin has no company yet */}
+          {isSuperAdmin && !hasCompany && (
+            <div
+              className="rounded-xl p-3 text-[11px] leading-relaxed"
+              style={{
+                background: 'rgba(74, 122, 140, 0.08)',
+                border: '1px solid rgba(74, 122, 140, 0.2)',
+              }}
+            >
+              <div className="text-ink-dim mb-1">No company associated</div>
+              <div className="text-ink-faint">
+                Create a company under <span className="font-mono text-accent-bright">Companies</span> to unlock the rest of the app.
+              </div>
+            </div>
           )}
         </nav>
 
@@ -136,8 +168,6 @@ export function Shell({ children, userEmail, isSuperAdmin, companyName }: ShellP
             <div className="text-xs text-ink truncate" title={userEmail}>
               {userEmail}
             </div>
-            {/* CRITICAL: button (not Link) — Next.js prefetches all <Link>s
-                on render, which would silently call /api/auth/logout. */}
             <button
               type="button"
               onClick={handleSignOut}
