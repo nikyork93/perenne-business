@@ -21,6 +21,7 @@ const SETTINGS_NAV = [
 
 const ADMIN_NAV = [
   { href: '/admin/companies', label: 'Companies' },
+  { href: '/admin/users', label: 'Users' },
   { href: '/admin/revenue', label: 'Revenue' },
   { href: '/admin/audit', label: 'Audit log' },
 ];
@@ -38,7 +39,7 @@ interface ShellProps {
  * Nav visibility logic:
  * - MAIN_NAV + SETTINGS_NAV (Dashboard, Cover, Codes, etc): shown only when
  *   user has a company. Owners always have one. Superadmins may not.
- * - ADMIN_NAV (Companies, Revenue, Audit): shown only to superadmins.
+ * - ADMIN_NAV (Companies, Users, Revenue, Audit): shown only to superadmins.
  *
  * Logout uses a <button> (not <Link>) to avoid Next.js auto-prefetch
  * triggering a silent logout.

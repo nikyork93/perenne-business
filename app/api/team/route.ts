@@ -1,205 +1,168 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { UserRole } from '@prisma/client';
+import { Resend } from 'resend';
+import { requireRole, createInviteToken } from '@/lib/auth';
+import { teamMemberInviteEmail } from '@/lib/email-templates';
 import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
-import { sendEmail } from '@/lib/email';
 import { env } from '@/lib/env';
-import { generateToken } from '@/lib/crypto';
+import type { UserRole } from '@prisma/client';
 
-export const runtime = 'nodejs';
+export const maxDuration = 15;
 
-// ─── GET: list team members of current company ──────────────────
-export async function GET(_req: NextRequest) {
-  const session = await getSession();
-  if (!session || !session.companyId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+// GET /api/team — list users of the current user's company
+export async function GET() {
+  const session = await requireRole(['OWNER', 'ADMIN', 'VIEWER']);
+
+  if (!session.companyId) {
+    return NextResponse.json({ users: [] });
   }
 
-  const members = await prisma.user.findMany({
+  const users = await prisma.user.findMany({
     where: { companyId: session.companyId },
     select: {
       id: true,
       email: true,
       name: true,
       role: true,
+      avatarUrl: true,
+      isActive: true,
+      passwordHash: true,
+      inviteAcceptedAt: true,
       lastLoginAt: true,
-      invitedByEmail: true,
-      invitedAt: true,
       createdAt: true,
     },
-    orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [{ role: 'asc' }, { createdAt: 'desc' }],
   });
 
-  return NextResponse.json({ ok: true, members });
+  const sanitized = users.map((u) => {
+    const status: 'active' | 'locked' | 'pending' = !u.isActive
+      ? 'locked'
+      : !u.passwordHash
+        ? 'pending'
+        : 'active';
+    return {
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      role: u.role,
+      avatarUrl: u.avatarUrl,
+      status,
+      inviteAcceptedAt: u.inviteAcceptedAt,
+      lastLoginAt: u.lastLoginAt,
+      createdAt: u.createdAt,
+    };
+  });
+
+  return NextResponse.json({ users: sanitized });
 }
 
-// ─── POST: invite a new team member ─────────────────────────────
-
-const inviteSchema = z.object({
-  email: z.string().email().toLowerCase().trim(),
-  role: z.enum([UserRole.ADMIN, UserRole.VIEWER]),  // cannot invite OWNER or SUPERADMIN
-  name: z.string().trim().max(100).optional(),
-});
+// POST /api/team — invite a new member to the current user's company
+interface InviteBody {
+  email: string;
+  name?: string;
+  role: UserRole;
+}
 
 export async function POST(req: NextRequest) {
-  const session = await getSession();
-  if (!session || !session.companyId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const session = await requireRole(['OWNER', 'ADMIN']);
+
+  if (!session.companyId) {
+    return NextResponse.json({ error: 'You must be assigned to a company' }, { status: 403 });
   }
 
-  // Only OWNER or SUPERADMIN can invite
-  if (session.role !== 'OWNER' && session.role !== 'SUPERADMIN') {
-    return NextResponse.json(
-      { error: 'Only the company OWNER can invite team members.' },
-      { status: 403 }
-    );
-  }
-
-  let data: z.infer<typeof inviteSchema>;
+  let body: InviteBody;
   try {
-    const body = await req.json();
-    const parsed = inviteSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Invalid invite data', details: parsed.error.flatten() },
-        { status: 400 }
-      );
-    }
-    data = parsed.data;
+    body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  // Email already in the system?
-  const existing = await prisma.user.findUnique({ where: { email: data.email } });
-  if (existing) {
-    // If already in the same company, this is idempotent: update role
-    if (existing.companyId === session.companyId) {
-      const updated = await prisma.user.update({
-        where: { id: existing.id },
-        data: { role: data.role, name: data.name ?? existing.name },
-      });
-      return NextResponse.json({
-        ok: true,
-        member: { id: updated.id, email: updated.email, role: updated.role },
-        message: 'User role updated.',
-      });
-    }
-    // In a different company: refuse (we don't support multi-company users in V1)
-    return NextResponse.json(
-      { error: 'This email is already associated with another company.' },
-      { status: 409 }
-    );
+  if (!body.email?.trim()) {
+    return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+  }
+  if (!body.role) {
+    return NextResponse.json({ error: 'Role is required' }, { status: 400 });
   }
 
-  const companyId = session.companyId;
+  // Authorization rules:
+  // - OWNER can invite OWNER, ADMIN, VIEWER
+  // - ADMIN can only invite ADMIN, VIEWER
+  // - Neither can create SUPERADMIN
+  if (body.role === 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Cannot create Perenne team members from a company' }, { status: 403 });
+  }
+  if (session.role === 'ADMIN' && body.role === 'OWNER') {
+    return NextResponse.json({ error: 'Only Owners can invite other Owners' }, { status: 403 });
+  }
 
-  // Create user + magic link in one transaction, then send invitation email
-  const { user, token } = await prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
-      data: {
-        email: data.email,
-        name: data.name ?? null,
-        role: data.role,
-        companyId,
-        invitedByEmail: session.email,
-        invitedAt: new Date(),
-      },
-    });
+  const email = body.email.toLowerCase().trim();
 
-    // Generate magic link valid 7 days (longer than login magic link)
-    const token = generateToken(32);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 });
+  }
 
-    await tx.magicLink.create({
-      data: {
-        token,
-        userId: user.id,
-        expiresAt,
-      },
-    });
-
-    await tx.auditLog.create({
-      data: {
-        companyId,
-        actorEmail: session.email,
-        actorRole: session.role,
-        action: 'team.invited',
-        targetType: 'User',
-        targetId: user.id,
-        metadata: { email: user.email, role: user.role },
-      },
-    });
-
-    return { user, token };
-  });
-
-  // Send invitation email
   const company = await prisma.company.findUnique({
-    where: { id: companyId },
+    where: { id: session.companyId },
     select: { name: true },
   });
-  const inviteUrl = `${env.NEXT_PUBLIC_APP_URL}/api/auth/verify?token=${token}`;
-  const html = buildInviteEmail({
-    companyName: company?.name ?? 'your company',
-    inviterEmail: session.email,
-    recipientName: user.name,
-    inviteUrl,
-    role: user.role,
+  if (!company) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
+
+  const user = await prisma.user.create({
+    data: {
+      email,
+      name: body.name?.trim() || null,
+      role: body.role,
+      companyId: session.companyId,
+      invitedByEmail: session.email,
+      invitedAt: new Date(),
+      isActive: true,
+    },
   });
 
-  sendEmail({
-    to: user.email,
-    subject: `You've been invited to ${company?.name ?? 'a Perenne Business company'}`,
-    html,
-    text: `Join ${company?.name} on Perenne Business: ${inviteUrl}\n\nThis invite expires in 7 days.`,
-  }).catch((e) => console.error('Invite email send failed:', e));
+  let emailStatus: 'sent' | 'failed' = 'failed';
+  let emailError: string | null = null;
+  let inviteUrl: string | null = null;
+
+  try {
+    inviteUrl = await createInviteToken(user.id);
+
+    if (env.RESEND_API_KEY) {
+      const resend = new Resend(env.RESEND_API_KEY);
+      const { subject, html, text } = teamMemberInviteEmail({
+        recipientName: user.name,
+        recipientEmail: email,
+        companyName: company.name,
+        inviteUrl,
+        invitedByName: session.name,
+        invitedByEmail: session.email,
+        role: body.role,
+      });
+
+      const result = await resend.emails.send({
+        from: env.EMAIL_FROM || 'Perenne Business <business@perenne.app>',
+        to: email,
+        replyTo: 'nicholas@perenne.app',
+        subject,
+        html,
+        text,
+      });
+
+      if (result.error) {
+        emailStatus = 'failed';
+        emailError = result.error.message;
+      } else {
+        emailStatus = 'sent';
+      }
+    } else {
+      emailError = 'RESEND_API_KEY not configured';
+    }
+  } catch (err) {
+    emailError = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[team POST] Invite error:', err);
+  }
 
   return NextResponse.json({
-    ok: true,
-    member: { id: user.id, email: user.email, role: user.role },
-    message: 'Invitation sent.',
+    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    email: { status: emailStatus, error: emailError, inviteUrl },
   });
-}
-
-// ─── Invite email HTML ──────────────────────────────────────────
-
-function buildInviteEmail(params: {
-  companyName: string;
-  inviterEmail: string;
-  recipientName: string | null;
-  inviteUrl: string;
-  role: UserRole;
-}): string {
-  const greeting = params.recipientName ? `Hi ${params.recipientName},` : 'Hi,';
-  return `<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#f5f5f0;">
-  <table width="100%" cellspacing="0" cellpadding="0" style="background:#0a0a0f;padding:48px 24px;">
-    <tr><td align="center">
-      <table width="520" cellspacing="0" cellpadding="0" style="max-width:520px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:40px;">
-        <tr><td>
-          <p style="margin:0 0 8px 0;font-size:11px;font-weight:600;letter-spacing:0.22em;text-transform:uppercase;color:rgba(212,165,116,0.8);">Invitation</p>
-          <h1 style="margin:0 0 24px 0;font-family:Georgia,serif;font-style:italic;font-size:26px;font-weight:400;color:#f5f5f0;letter-spacing:-0.02em;">
-            Join ${escapeHtml(params.companyName)} on Perenne Business
-          </h1>
-          <p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;color:rgba(255,255,255,0.85);">${greeting}</p>
-          <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:rgba(255,255,255,0.85);">
-            ${escapeHtml(params.inviterEmail)} has invited you to join <strong>${escapeHtml(params.companyName)}</strong> on Perenne Business as a ${params.role === 'ADMIN' ? 'team admin' : 'viewer'}.
-          </p>
-          <table cellspacing="0" cellpadding="0"><tr><td style="background:#d4a574;border-radius:10px;">
-            <a href="${params.inviteUrl}" style="display:inline-block;padding:14px 28px;font-size:14px;font-weight:600;color:#1a1309;text-decoration:none;letter-spacing:0.02em;">Accept invitation →</a>
-          </td></tr></table>
-          <p style="margin:32px 0 0 0;font-size:12px;line-height:1.6;color:rgba(255,255,255,0.4);">
-            This invite expires in 7 days. If you weren't expecting this, you can safely ignore the email.
-          </p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body></html>`;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

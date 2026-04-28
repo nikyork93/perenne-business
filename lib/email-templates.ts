@@ -46,6 +46,58 @@ export function inviteEmail(params: InviteEmailParams): { subject: string; html:
   return { subject, html, text };
 }
 
+interface TeamMemberInviteEmailParams {
+  recipientName?: string | null;
+  recipientEmail: string;
+  companyName: string;
+  inviteUrl: string;
+  invitedByName?: string | null;
+  invitedByEmail: string;
+  role: 'ADMIN' | 'VIEWER' | 'OWNER' | 'SUPERADMIN';
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  OWNER: 'Owner',
+  ADMIN: 'Administrator',
+  VIEWER: 'Viewer',
+  SUPERADMIN: 'Perenne team member',
+};
+
+export function teamMemberInviteEmail(params: TeamMemberInviteEmailParams): { subject: string; html: string; text: string } {
+  const { recipientName, companyName, inviteUrl, invitedByName, invitedByEmail, role } = params;
+  const greeting = recipientName ? `Hi ${recipientName},` : 'Hi,';
+  const inviterDisplay = invitedByName || invitedByEmail;
+  const roleLabel = ROLE_LABELS[role] || role;
+  const isPerenneTeam = role === 'SUPERADMIN';
+
+  const subject = isPerenneTeam
+    ? `You've been invited to the Perenne team`
+    : `You've been added to ${companyName} on Perenne Business`;
+
+  const text = `${greeting}\n\n${inviterDisplay} has invited you to ${isPerenneTeam ? 'join the Perenne team' : `${companyName} on Perenne Business`} as a ${roleLabel}.\n\nSet up your account here (link valid for 7 days):\n${inviteUrl}\n\nOnce you set your password, you can sign in any time at https://business.perenne.app/login\n\n— Perenne team`;
+
+  const introHtml = isPerenneTeam
+    ? `<p style="color:#c1c1c8;font-size:15px;line-height:1.6;margin:0 0 28px;"><strong style="color:#f4f4f5;">${escapeHtml(inviterDisplay)}</strong> has invited you to join the <strong style="color:#f4f4f5;">Perenne team</strong> as a <strong style="color:#f4f4f5;">${escapeHtml(roleLabel)}</strong>. You&apos;ll have access to manage all customer companies on the platform.</p>`
+    : `<p style="color:#c1c1c8;font-size:15px;line-height:1.6;margin:0 0 28px;"><strong style="color:#f4f4f5;">${escapeHtml(inviterDisplay)}</strong> has added you to <strong style="color:#f4f4f5;">${escapeHtml(companyName)}</strong> on Perenne Business as a <strong style="color:#f4f4f5;">${escapeHtml(roleLabel)}</strong>. Choose your password below to access your team workspace.</p>`;
+
+  const html = renderEmail({
+    title: subject,
+    bodyHtml: `
+      <h1 style="font-family:Georgia,serif;font-style:italic;font-size:30px;color:#f4f4f5;margin:0 0 20px;font-weight:400;letter-spacing:-0.01em;line-height:1.2;">${isPerenneTeam ? `Join the Perenne team` : `You're invited to ${escapeHtml(companyName)}`}</h1>
+      <p style="color:#c1c1c8;font-size:15px;line-height:1.6;margin:0 0 8px;">${escapeHtml(greeting)}</p>
+      ${introHtml}
+    `,
+    ctaText: 'Set up my account',
+    ctaUrl: inviteUrl,
+    footerHtml: `
+      <p style="color:#71717a;font-size:12px;line-height:1.6;margin:0 0 8px;">This invite link expires in 7 days. If it expires, ask ${escapeHtml(inviterDisplay)} to send a new one.</p>
+      <p style="color:#71717a;font-size:12px;line-height:1.6;margin:0;">If you weren&apos;t expecting this invite, you can ignore this email.</p>
+    `,
+  });
+
+  return { subject, html, text };
+}
+
 interface ResetPasswordEmailParams {
   recipientName?: string | null;
   recipientEmail: string;
@@ -98,7 +150,6 @@ function renderEmail(p: RenderEmailParams): string {
   <meta name="supported-color-schemes" content="dark">
   <title>${escapeHtml(p.title)}</title>
   <style>
-    /* APPLE MAIL FIX — force the body and html to inherit the dark bg */
     html, body { margin:0 !important; padding:0 !important; background-color:#0a0a0f !important; }
     body { width:100% !important; min-width:100% !important; }
     table { border-collapse:collapse; }
@@ -106,27 +157,15 @@ function renderEmail(p: RenderEmailParams): string {
   </style>
 </head>
 <body style="margin:0;padding:0;background-color:#0a0a0f;color:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;" bgcolor="#0a0a0f">
-
-  <!-- Outermost wrapper table covers FULL viewport — kills the white border in Apple Mail -->
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#0a0a0f;background-image:radial-gradient(ellipse at 20% 10%, rgba(74,122,140,0.18) 0%, transparent 50%),radial-gradient(ellipse at 80% 90%, rgba(44,88,104,0.15) 0%, transparent 50%);" bgcolor="#0a0a0f">
     <tr>
       <td align="center" valign="top" style="padding:48px 20px;">
-
-        <!-- Liquid glass card -->
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" style="max-width:560px;width:100%;background-color:rgba(24,24,27,0.92);border:1px solid rgba(255,255,255,0.08);border-radius:24px;">
-
-          <!-- Logo header -->
           <tr><td style="padding:36px 40px 12px;">
             ${LOGO_SVG}
             <div style="font-family:ui-monospace,'Geist Mono',Menlo,monospace;font-size:10px;color:#71717a;letter-spacing:0.18em;text-transform:uppercase;margin-top:14px;">Perenne · Business portal</div>
           </td></tr>
-
-          <!-- Body -->
-          <tr><td style="padding:24px 40px 8px;">
-            ${p.bodyHtml}
-          </td></tr>
-
-          <!-- CTA button -->
+          <tr><td style="padding:24px 40px 8px;">${p.bodyHtml}</td></tr>
           <tr><td align="center" style="padding:0 40px 8px;">
             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
               <tr><td align="center" bgcolor="#4a7a8c" style="border-radius:14px;">
@@ -134,25 +173,16 @@ function renderEmail(p: RenderEmailParams): string {
               </td></tr>
             </table>
           </td></tr>
-
-          <!-- Footer -->
-          <tr><td style="padding:28px 40px 36px;">
-            ${p.footerHtml ?? ''}
-          </td></tr>
-
-          <!-- Brand strip -->
+          <tr><td style="padding:28px 40px 36px;">${p.footerHtml ?? ''}</td></tr>
           <tr><td style="padding:18px 40px;border-top:1px solid rgba(255,255,255,0.06);background-color:rgba(0,0,0,0.2);border-radius:0 0 24px 24px;">
             <div style="font-family:ui-monospace,Menlo,monospace;font-size:10px;color:#52525b;letter-spacing:0.16em;text-transform:uppercase;">
               Perenne Note · branded notebooks for teams
             </div>
           </td></tr>
-
         </table>
-
       </td>
     </tr>
   </table>
-
 </body>
 </html>`;
 }

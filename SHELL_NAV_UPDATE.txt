@@ -1,0 +1,62 @@
+═══════════════════════════════════════════════════════════════════
+SHELL NAVIGATION UPDATE — add new nav links to Shell.tsx
+═══════════════════════════════════════════════════════════════════
+
+Open: components/layout/Shell.tsx
+
+Find the section where you define ADMIN_NAV (or similar — the array/list
+of navigation items shown only to SUPERADMIN), and add the "Users" entry.
+
+If you have something like:
+
+  const ADMIN_NAV = [
+    { href: '/admin/companies', label: 'Companies', icon: '⌘' },
+  ];
+
+Update it to:
+
+  const ADMIN_NAV = [
+    { href: '/admin/companies', label: 'Companies', icon: '⌘' },
+    { href: '/admin/users', label: 'Users', icon: '◐' },
+  ];
+
+═══════════════════════════════════════════════════════════════════
+
+Find the section for SETTINGS_NAV (or wherever you list nav items
+visible to OWNER/ADMIN within a company), and add the "Team" entry.
+
+If you have something like:
+
+  const SETTINGS_NAV = [
+    { href: '/settings', label: 'Settings', icon: '⚙' },
+  ];
+
+Update it to:
+
+  const SETTINGS_NAV = [
+    { href: '/team', label: 'Team', icon: '◐' },
+    { href: '/settings', label: 'Settings', icon: '⚙' },
+  ];
+
+═══════════════════════════════════════════════════════════════════
+
+If your Shell.tsx structure differs from the above, just add these two
+links wherever appropriate based on the visibility rules:
+
+  /admin/users  → visible only when isSuperAdmin === true
+  /team         → visible only when companyName !== null AND role !== 'VIEWER'
+                  (or always visible to OWNER/ADMIN/VIEWER of the company —
+                  VIEWER can see the list, just can't invite)
+
+═══════════════════════════════════════════════════════════════════
+
+If you can't find or edit Shell.tsx easily, you can still navigate
+to the new pages directly via URL:
+
+  https://business.perenne.app/admin/users
+  https://business.perenne.app/team
+
+The pages work fully without the nav links — the nav is just for
+discoverability.
+
+═══════════════════════════════════════════════════════════════════

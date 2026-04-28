@@ -1,44 +1,91 @@
-## ARCHIVE 1 — Auth foundation (password-only)
+═══════════════════════════════════════════════════════════════════
+ARCHIVE 2 — Users Management (Step 2 of full development)
+═══════════════════════════════════════════════════════════════════
 
-### Files in this archive
+## Files in this archive (12 total)
 
-```
-prisma/SCHEMA_UPDATE.txt          ← READ THIS, manually paste fields into your schema.prisma
-lib/auth.ts                        ← bcrypt + session + invite + reset
-lib/email-templates.ts             ← Perenne Note SVG inline + glass design
-middleware.ts                      ← public paths updated
-app/login/page.tsx                 ← email + password login
-app/invite/page.tsx                ← first-time setup (set password)
-app/forgot-password/page.tsx       ← request reset link
-app/reset-password/page.tsx        ← set new password
-app/api/auth/login/route.ts
-app/api/auth/accept-invite/route.ts
-app/api/auth/forgot-password/route.ts
-app/api/auth/reset-password/route.ts
-app/api/admin/companies/route.ts   ← updated to use invite tokens (was magic link)
-```
+components/ui/Avatar.tsx                                 NEW
+lib/email-templates.ts                                   UPDATED (adds teamMemberInviteEmail)
+app/admin/users/page.tsx                                 NEW
+app/admin/users/UsersListClient.tsx                      NEW
+app/team/page.tsx                                        NEW
+app/team/TeamListClient.tsx                              NEW
+app/api/admin/users/route.ts                             NEW
+app/api/admin/users/[id]/route.ts                        NEW
+app/api/admin/users/[id]/resend-invite/route.ts          NEW
+app/api/admin/users/[id]/reset-password/route.ts         NEW
+app/api/admin/users/[id]/sessions/route.ts               NEW
+app/api/team/route.ts                                    NEW
+app/api/team/[id]/route.ts                               NEW
+SHELL_NAV_UPDATE.txt                                     READ — manual changes to Shell.tsx
 
-### Deploy steps (in order)
+## What this delivers
 
-1. Extract archive into perenne-business root
-2. Update prisma/schema.prisma — open SCHEMA_UPDATE.txt and paste the new fields into your User model
-3. `npm install bcryptjs --legacy-peer-deps`
-4. `npm install -D @types/bcryptjs --legacy-peer-deps`
-5. `npx prisma db push` (will prompt for unique constraint warnings — answer Y)
-6. `git add -A && git commit -m "feat: password auth + invite/reset flow"`
-7. `git push`
+SUPERADMIN — /admin/users
+  - Cross-company users list with filters: search, role, company, status
+  - Invite Perenne team members (SUPERADMIN role, no company)
+  - Invite users to any specific company with any role
+  - Per-user actions: resend invite / send password reset / sign-out everywhere /
+                       disable / enable / delete
 
-### Test sequence after deploy
+OWNER & ADMIN — /team
+  - Their company's team only (cannot see other companies)
+  - Invite member to their company (OWNER can invite OWNER/ADMIN/VIEWER,
+    ADMIN can invite ADMIN/VIEWER, no SUPERADMIN ever from this scope)
+  - Per-user actions: resend invite / send password reset / sign-out everywhere /
+                       disable / enable / remove
 
-1. Open https://business.perenne.app/forgot-password
-2. Enter your email (nicholascompagnoni@gmail.com)
-3. Check inbox — you'll receive Perenne-branded email
-4. Click reset link → set your password
-5. Redirected to /login → sign in with email + password
-6. Now go to /admin/companies → + New company → create Stelvio Collection with Nicholas Stelvio email
-7. Nicholas receives Perenne-branded invite email
-8. He clicks → sets his password → auto-logged in
+VIEWER — /team
+  - Read-only access to the list, no invite/manage actions
 
-### Rollback if anything breaks
+## Deploy
 
-The old magic link route /api/auth/verify is still preserved — you can roll back the deploy on Vercel.
+cd ~/Dropbox/Documenti/perenne-business && \
+tar -xzf ~/Downloads/perenne-users.tar.gz && \
+cat SHELL_NAV_UPDATE.txt
+
+Then manually update components/layout/Shell.tsx based on the
+SHELL_NAV_UPDATE.txt instructions (add 2 nav links).
+
+Then:
+
+git add -A && \
+git commit -m "feat: users management (admin cross-company + team scoped)" && \
+git push && \
+rm ~/Downloads/perenne-users.tar.gz
+
+No schema changes are needed — uses existing User/Company/Session models.
+
+## Test sequence after deploy
+
+1. Login as SUPERADMIN at https://business.perenne.app/login
+2. Navigate to /admin/users (or click "Users" in sidebar if you added it)
+3. See yourself listed as Perenne team member
+4. Click "+ Invite to a company" → pick Stelvio Collection (if you have one)
+   → select Owner role → enter another email → Send invite
+5. Receive email at the invited address with Perenne branding
+6. Click invite link → set password → land in /dashboard as OWNER of that company
+7. As that OWNER, navigate to /team
+8. Click "+ Invite member" → invite an ADMIN → Send
+9. The new admin sets up password and lands in dashboard
+10. Test other actions: send password reset, sign out everywhere, disable, etc.
+
+## Authorization matrix
+
+                          SUPERADMIN  OWNER       ADMIN       VIEWER
+View /admin/users         ✓           ✗           ✗           ✗
+View /team                ✗ (no co.)  ✓           ✓           ✓
+Invite SUPERADMIN         ✓           ✗           ✗           ✗
+Invite to any company     ✓           ✗           ✗           ✗
+Invite OWNER (own co.)    ✓           ✓           ✗           ✗
+Invite ADMIN (own co.)    ✓           ✓           ✓           ✗
+Invite VIEWER (own co.)   ✓           ✓           ✓           ✗
+Manage SUPERADMIN         ✓           ✗           ✗           ✗
+Manage OWNER (own co.)    ✓           ✓           ✗           ✗
+Manage ADMIN (own co.)    ✓           ✓           ✓           ✗
+Manage VIEWER (own co.)   ✓           ✓           ✓           ✗
+Manage self               ✓ (limited) ✓ (limited) ✓ (limited) ✗
+
+Note: nobody can deactivate themselves or change their own role.
+
+═══════════════════════════════════════════════════════════════════

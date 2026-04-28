@@ -1,126 +1,109 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { UserRole } from '@prisma/client';
+import { requireRole } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
+import type { UserRole } from '@prisma/client';
 
-export const runtime = 'nodejs';
+interface RouteContext {
+  params: Promise<{ id: string }>;
+}
 
-interface Params { params: Promise<{ id: string }>; }
+// PATCH /api/team/[id] — OWNER/ADMIN can edit name/role/isActive of users in their company
+export async function PATCH(req: NextRequest, ctx: RouteContext) {
+  const session = await requireRole(['OWNER', 'ADMIN']);
+  const { id } = await ctx.params;
 
-// ─── PATCH: change member role ──────────────────────────────────
-
-const patchSchema = z.object({
-  role: z.enum([UserRole.ADMIN, UserRole.VIEWER, UserRole.OWNER]),
-});
-
-export async function PATCH(req: NextRequest, { params }: Params) {
-  const { id } = await params;
-  const session = await getSession();
-  if (!session || !session.companyId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  if (session.role !== 'OWNER' && session.role !== 'SUPERADMIN') {
-    return NextResponse.json({ error: 'Only the OWNER can change roles.' }, { status: 403 });
-  }
-
-  let data: z.infer<typeof patchSchema>;
+  let body: { name?: string | null; role?: UserRole; isActive?: boolean };
   try {
-    const body = await req.json();
-    const parsed = patchSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: 'Invalid role' }, { status: 400 });
-    }
-    data = parsed.data;
+    body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
   const target = await prisma.user.findUnique({ where: { id } });
-  if (!target || target.companyId !== session.companyId) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  }
-  if (target.id === session.userId) {
-    return NextResponse.json({ error: 'Cannot change your own role.' }, { status: 400 });
+  if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+  // Must be in same company
+  if (target.companyId !== session.companyId) {
+    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
   }
 
-  // Promoting someone to OWNER? Demote the current OWNER to ADMIN.
-  // Only one OWNER per company.
-  await prisma.$transaction(async (tx) => {
-    if (data.role === 'OWNER') {
-      await tx.user.updateMany({
-        where: { companyId: session.companyId!, role: 'OWNER' },
-        data: { role: 'ADMIN' },
-      });
+  // Can't modify SUPERADMIN
+  if (target.role === 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Cannot modify Perenne team members' }, { status: 403 });
+  }
+
+  // Can't promote to SUPERADMIN
+  if (body.role === 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Cannot create Perenne team members' }, { status: 403 });
+  }
+
+  // ADMIN cannot change OWNER role
+  if (session.role === 'ADMIN') {
+    if (target.role === 'OWNER') {
+      return NextResponse.json({ error: 'Only Owners can modify other Owners' }, { status: 403 });
     }
-    await tx.user.update({
-      where: { id },
-      data: { role: data.role },
-    });
-    await tx.auditLog.create({
-      data: {
-        companyId: session.companyId!,
-        actorEmail: session.email,
-        actorRole: session.role,
-        action: 'team.role_changed',
-        targetType: 'User',
-        targetId: id,
-        metadata: { oldRole: target.role, newRole: data.role },
-      },
-    });
+    if (body.role === 'OWNER') {
+      return NextResponse.json({ error: 'Only Owners can promote to Owner' }, { status: 403 });
+    }
+  }
+
+  // Can't deactivate self
+  if (target.id === session.userId && body.isActive === false) {
+    return NextResponse.json({ error: 'You cannot deactivate yourself' }, { status: 400 });
+  }
+  if (target.id === session.userId && body.role && body.role !== session.role) {
+    return NextResponse.json({ error: 'You cannot change your own role' }, { status: 400 });
+  }
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data: {
+      ...(body.name !== undefined && { name: body.name?.trim() || null }),
+      ...(body.role !== undefined && { role: body.role }),
+      ...(body.isActive !== undefined && { isActive: body.isActive }),
+    },
   });
 
-  return NextResponse.json({ ok: true });
+  if (body.isActive === false) {
+    await prisma.session.deleteMany({ where: { userId: id } });
+  }
+
+  return NextResponse.json({
+    user: {
+      id: updated.id,
+      email: updated.email,
+      name: updated.name,
+      role: updated.role,
+      isActive: updated.isActive,
+    },
+  });
 }
 
-// ─── DELETE: remove member ──────────────────────────────────────
+// DELETE /api/team/[id]
+export async function DELETE(_req: NextRequest, ctx: RouteContext) {
+  const session = await requireRole(['OWNER', 'ADMIN']);
+  const { id } = await ctx.params;
 
-export async function DELETE(_req: NextRequest, { params }: Params) {
-  const { id } = await params;
-  const session = await getSession();
-  if (!session || !session.companyId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  if (session.role !== 'OWNER' && session.role !== 'SUPERADMIN') {
-    return NextResponse.json({ error: 'Only the OWNER can remove members.' }, { status: 403 });
+  if (id === session.userId) {
+    return NextResponse.json({ error: 'You cannot delete yourself' }, { status: 400 });
   }
 
   const target = await prisma.user.findUnique({ where: { id } });
-  if (!target || target.companyId !== session.companyId) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  }
-  if (target.id === session.userId) {
-    return NextResponse.json(
-      { error: 'Cannot remove yourself. Transfer ownership first.' },
-      { status: 400 }
-    );
-  }
-  if (target.role === 'OWNER') {
-    return NextResponse.json(
-      { error: 'Cannot remove the OWNER. Transfer ownership first.' },
-      { status: 400 }
-    );
+  if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+  if (target.companyId !== session.companyId) {
+    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
   }
 
-  await prisma.$transaction([
-    // Invalidate all their sessions
-    prisma.session.deleteMany({ where: { userId: id } }),
-    // Invalidate unused magic links
-    prisma.magicLink.deleteMany({ where: { userId: id, usedAt: null } }),
-    // Remove the user
-    prisma.user.delete({ where: { id } }),
-    prisma.auditLog.create({
-      data: {
-        companyId: session.companyId!,
-        actorEmail: session.email,
-        actorRole: session.role,
-        action: 'team.removed',
-        targetType: 'User',
-        targetId: id,
-        metadata: { email: target.email, role: target.role },
-      },
-    }),
-  ]);
+  if (target.role === 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Cannot delete Perenne team members' }, { status: 403 });
+  }
 
-  return NextResponse.json({ ok: true });
+  if (session.role === 'ADMIN' && target.role === 'OWNER') {
+    return NextResponse.json({ error: 'Only Owners can delete other Owners' }, { status: 403 });
+  }
+
+  await prisma.user.delete({ where: { id } });
+
+  return NextResponse.json({ success: true });
 }

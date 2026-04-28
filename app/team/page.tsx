@@ -1,59 +1,30 @@
-import { redirect } from 'next/navigation';
-import { requireSession } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Shell } from '@/components/layout/Shell';
-import { PageHeader } from '@/components/layout/PageHeader';
-import { TeamClient } from '@/components/TeamClient';
+import { TeamListClient } from './TeamListClient';
+
+export const dynamic = 'force-dynamic';
 
 export default async function TeamPage() {
-  const session = await requireSession();
-  if (!session.companyId) {
-    redirect('/onboarding');
-  }
+  const session = await requireRole(['OWNER', 'ADMIN', 'VIEWER']);
 
-  const companyId = session.companyId;
-
-  const [company, members] = await Promise.all([
-    prisma.company.findUnique({ where: { id: companyId } }),
-    prisma.user.findMany({
-      where: { companyId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        lastLoginAt: true,
-        invitedByEmail: true,
-        invitedAt: true,
-        createdAt: true,
-      },
-      orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
-    }),
-  ]);
-
-  const canManage = session.role === 'OWNER' || session.role === 'SUPERADMIN';
+  const company = session.companyId
+    ? await prisma.company.findUnique({
+        where: { id: session.companyId },
+        select: { name: true },
+      })
+    : null;
 
   return (
     <Shell
-      companyName={company?.name}
       userEmail={session.email}
-      isSuperAdmin={session.role === 'SUPERADMIN'}
+      isSuperAdmin={false}
+      companyName={company?.name ?? null}
     >
-      <PageHeader
-        eyebrow="Settings · Team"
-        title="Team members"
-        description="Invite admins to help you manage codes and distribution."
-      />
-
-      <TeamClient
-        members={members.map((m) => ({
-          ...m,
-          lastLoginAt: m.lastLoginAt?.toISOString() ?? null,
-          invitedAt: m.invitedAt?.toISOString() ?? null,
-          createdAt: m.createdAt.toISOString(),
-        }))}
+      <TeamListClient
+        companyName={company?.name ?? 'your company'}
         currentUserId={session.userId}
-        canManage={canManage}
+        currentUserRole={session.role}
       />
     </Shell>
   );
