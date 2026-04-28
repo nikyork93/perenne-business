@@ -51,9 +51,9 @@ export default async function AdminRevenuePage() {
       />
 
       <div className="grid grid-cols-4 gap-3.5 mb-6">
-        <Stat label="Lifetime revenue" value={formatEuros(lifetimeRevenue)} hint={`${lifetimeOrders} orders`} />
-        <Stat label="Last 30 days" value={formatEuros(paid30d._sum.totalPriceCents ?? 0)} hint={`${paid30d._count} orders`} />
-        <Stat label="Last 90 days" value={formatEuros(paid90d._sum.totalPriceCents ?? 0)} hint={`${paid90d._count} orders`} />
+        <Stat label="Lifetime revenue" value={formatEuros(lifetimeRevenue) as any} hint={`${lifetimeOrders} orders`} />
+        <Stat label="Last 30 days" value={formatEuros(paid30d._sum.totalPriceCents ?? 0) as any} hint={`${paid30d._count} orders`} />
+        <Stat label="Last 90 days" value={formatEuros(paid90d._sum.totalPriceCents ?? 0) as any} hint={`${paid90d._count} orders`} />
         <Stat label="Paying companies" value={uniqueCompanies} hint={`avg ${formatEuros(avgOrderValue)}/order`} />
       </div>
 

@@ -17,7 +17,7 @@ export default async function SettingsPage() {
     where: { id: session.companyId! },
   });
 
-  if (!company) {
+  if (!company) { const { redirect } = await import("next/navigation"); redirect("/onboarding"); }
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
