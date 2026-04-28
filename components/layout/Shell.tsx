@@ -1,189 +1,38 @@
-'use client';
-
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useState, type ReactNode } from 'react';
-import { PerenneLogo } from '@/components/layout/PerenneLogo';
-
-// ─── Navigation definitions ─────────────────────────────────────────
-
-const MAIN_NAV = [
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/cover', label: 'Cover' },
-  { href: '/codes', label: 'Codes' },
-  { href: '/distribution', label: 'Distribution' },
-  { href: '/store', label: 'Store' },
-  { href: '/billing', label: 'Billing' },
-];
-
-const SETTINGS_NAV = [
-  { href: '/team', label: 'Team' },
-  { href: '/settings', label: 'Settings' },
-];
-
-const ADMIN_NAV = [
-  { href: '/admin/companies', label: 'Companies' },
-  { href: '/admin/revenue', label: 'Revenue' },
-  { href: '/admin/audit', label: 'Audit log' },
-];
+import type { ReactNode } from 'react';
+import { requireSession } from '@/lib/auth';
+import { ShellClient } from './ShellClient';
 
 interface ShellProps {
-  user: {
+  children: ReactNode;
+  /**
+   * Optional pre-fetched session. If provided, used directly.
+   * If omitted, Shell fetches the session itself via requireSession().
+   * This makes Shell work regardless of how the layout invokes it.
+   */
+  user?: {
     email: string;
     name: string | null;
     role: string;
     companyId: string | null;
   };
-  children: ReactNode;
 }
 
-export function Shell({ user, children }: ShellProps) {
-  const pathname = usePathname();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const isSuperAdmin = user.role === 'SUPERADMIN';
+/**
+ * Shell — Server Component wrapper. Fetches session if not provided,
+ * then delegates to ShellClient for interactive UI (drawer, pathname).
+ */
+export async function Shell({ children, user }: ShellProps) {
+  let resolvedUser = user;
 
-  return (
-    <div className="min-h-screen bg-ink-bg text-ink relative overflow-x-hidden">
-      {/* Ambient background glow */}
-      <div
-        className="fixed inset-0 opacity-25 pointer-events-none -z-10"
-        style={{
-          background:
-            'radial-gradient(circle at 20% 30%, rgba(74,122,140,0.18) 0%, transparent 50%), radial-gradient(circle at 80% 70%, rgba(44,88,104,0.14) 0%, transparent 50%)',
-        }}
-      />
+  if (!resolvedUser) {
+    const session = await requireSession();
+    resolvedUser = {
+      email: session.email,
+      name: session.name,
+      role: session.role,
+      companyId: session.companyId,
+    };
+  }
 
-      {/* ─── Sidebar (desktop) + drawer (mobile) ─── */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-30 w-64 border-r border-glass-border bg-glass-base backdrop-blur-2xl backdrop-saturate-180 flex-col transition-transform duration-200 ease-out ${
-          mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        } md:translate-x-0 md:flex flex`}
-      >
-        <div className="flex items-center justify-between p-6 border-b border-glass-border">
-          <Link href="/dashboard" className="text-ink hover:text-ink transition" onClick={() => setMobileOpen(false)}>
-            <PerenneLogo variant="extended" height={22} />
-          </Link>
-          <button
-            type="button"
-            onClick={() => setMobileOpen(false)}
-            className="md:hidden text-ink-faint hover:text-ink text-xl leading-none px-2"
-            aria-label="Close menu"
-          >
-            ×
-          </button>
-        </div>
-
-        <nav className="flex-1 overflow-y-auto p-4 space-y-6">
-          {/* MAIN NAV — always shown for everyone */}
-          <NavSection items={MAIN_NAV} pathname={pathname} onNav={() => setMobileOpen(false)} />
-
-          {/* SETTINGS NAV — always shown for everyone */}
-          <NavSection
-            title="Workspace"
-            items={SETTINGS_NAV}
-            pathname={pathname}
-            onNav={() => setMobileOpen(false)}
-          />
-
-          {/* ADMIN NAV — shown ONLY if user is superadmin */}
-          {isSuperAdmin && (
-            <NavSection
-              title="Superadmin"
-              items={ADMIN_NAV}
-              pathname={pathname}
-              onNav={() => setMobileOpen(false)}
-            />
-          )}
-        </nav>
-
-        {/* User pill */}
-        <div className="p-4 border-t border-glass-border">
-          <div className="rounded-2xl border border-glass-border bg-white/[0.03] p-3">
-            <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-1">
-              {isSuperAdmin ? 'Superadmin' : user.role}
-            </div>
-            <div className="text-xs text-ink truncate" title={user.email}>
-              {user.name || user.email}
-            </div>
-            <Link
-              href="/api/auth/logout"
-              className="block mt-2 text-[11px] text-ink-faint hover:text-ink transition font-mono"
-            >
-              Sign out →
-            </Link>
-          </div>
-        </div>
-      </aside>
-
-      {/* ─── Mobile top bar ─── */}
-      <header className="md:hidden sticky top-0 z-20 flex items-center justify-between px-4 py-3 border-b border-glass-border bg-glass-base backdrop-blur-2xl">
-        <button
-          type="button"
-          onClick={() => setMobileOpen(true)}
-          className="text-ink-dim hover:text-ink text-xl"
-          aria-label="Open menu"
-        >
-          ☰
-        </button>
-        <PerenneLogo variant="extended" height={18} />
-        <div className="w-6" />
-      </header>
-
-      {/* ─── Main content ─── */}
-      <main className="md:pl-64 min-h-screen">
-        <div className="max-w-7xl mx-auto p-6 md:p-10">{children}</div>
-      </main>
-
-      {/* Backdrop for mobile drawer */}
-      {mobileOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-20 bg-black/50 backdrop-blur-sm"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-// ─── Helper components ──────────────────────────────────────────────
-
-interface NavSectionProps {
-  title?: string;
-  items: { href: string; label: string }[];
-  pathname: string;
-  onNav: () => void;
-}
-
-function NavSection({ title, items, pathname, onNav }: NavSectionProps) {
-  return (
-    <div>
-      {title && (
-        <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase px-3 mb-2">
-          {title}
-        </div>
-      )}
-      <ul className="space-y-0.5">
-        {items.map((item) => {
-          const active =
-            pathname === item.href ||
-            (item.href !== '/dashboard' && pathname.startsWith(item.href + '/'));
-          return (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                onClick={onNav}
-                className={`block px-3 py-2 rounded-xl text-sm transition-all ${
-                  active
-                    ? 'bg-accent-soft text-ink border border-accent/30'
-                    : 'text-ink-dim hover:text-ink hover:bg-white/[0.04] border border-transparent'
-                }`}
-              >
-                {item.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
+  return <ShellClient user={resolvedUser}>{children}</ShellClient>;
 }
