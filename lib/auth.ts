@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { randomBytes, createHmac } from 'crypto';
+import { randomBytes } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
 import type { UserRole } from '@prisma/client';
@@ -17,33 +17,18 @@ export interface Session {
   companyId: string | null;
 }
 
-// ─── Token generation ──────────────────────────────────────────────
+// ─── Token gen ─────────────────────────────────────────────────────
 
 function generateRandomToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-function signSessionToken(sessionId: string): string {
-  const hmac = createHmac('sha256', env.AUTH_SECRET);
-  hmac.update(sessionId);
-  const signature = hmac.digest('base64url');
-  return `${sessionId}.${signature}`;
-}
-
-function verifySessionToken(token: string): string | null {
-  const [sessionId, signature] = token.split('.');
-  if (!sessionId || !signature) return null;
-
-  const expectedHmac = createHmac('sha256', env.AUTH_SECRET);
-  expectedHmac.update(sessionId);
-  const expectedSignature = expectedHmac.digest('base64url');
-
-  if (signature !== expectedSignature) return null;
-  return sessionId;
-}
-
 // ─── Magic link ────────────────────────────────────────────────────
 
+/**
+ * Creates a magic link for the given email.
+ * Returns the FULL URL to email to the user.
+ */
 export async function createMagicLink(email: string): Promise<string> {
   const normalizedEmail = email.toLowerCase().trim();
   const token = generateRandomToken();
@@ -72,7 +57,17 @@ export async function createMagicLink(email: string): Promise<string> {
   return `${env.NEXT_PUBLIC_APP_URL}/api/auth/verify?token=${token}`;
 }
 
-export async function consumeMagicLink(token: string): Promise<Session | null> {
+/**
+ * Consumes a magic link token, returning the user info if valid.
+ * Does NOT create a session (call createSession separately).
+ */
+export async function consumeMagicLink(token: string): Promise<{
+  userId: string;
+  email: string;
+  name: string | null;
+  role: UserRole;
+  companyId: string | null;
+} | null> {
   const magicLink = await prisma.magicLink.findUnique({
     where: { token },
     include: { user: true },
@@ -94,25 +89,6 @@ export async function consumeMagicLink(token: string): Promise<Session | null> {
     data: { lastLoginAt: new Date() },
   });
 
-  // Create session
-  const session = await prisma.session.create({
-    data: {
-      userId: magicLink.user.id,
-      expiresAt: new Date(Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000),
-    },
-  });
-
-  // Set cookie
-  const signedToken = signSessionToken(session.id);
-  const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, signedToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
-  });
-
   return {
     userId: magicLink.user.id,
     email: magicLink.user.email,
@@ -124,16 +100,37 @@ export async function consumeMagicLink(token: string): Promise<Session | null> {
 
 // ─── Session ───────────────────────────────────────────────────────
 
+/**
+ * Creates a session for a user and sets the cookie.
+ * Returns the session ID (also the cookie value).
+ */
+export async function createSession(userId: string): Promise<string> {
+  const session = await prisma.session.create({
+    data: {
+      userId,
+      expiresAt: new Date(Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000),
+    },
+  });
+
+  const cookieStore = await cookies();
+  cookieStore.set(SESSION_COOKIE, session.id, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
+  });
+
+  return session.id;
+}
+
 export async function getSession(): Promise<Session | null> {
   const cookieStore = await cookies();
   const cookie = cookieStore.get(SESSION_COOKIE);
   if (!cookie?.value) return null;
 
-  const sessionId = verifySessionToken(cookie.value);
-  if (!sessionId) return null;
-
   const session = await prisma.session.findUnique({
-    where: { id: sessionId },
+    where: { id: cookie.value },
     include: { user: true },
   });
 
@@ -160,28 +157,10 @@ export async function requireSession(): Promise<Session> {
   return session;
 }
 
-export async function destroySession(): Promise<void> {
-  const cookieStore = await cookies();
-  const cookie = cookieStore.get(SESSION_COOKIE);
-
-  if (cookie?.value) {
-    const sessionId = verifySessionToken(cookie.value);
-    if (sessionId) {
-      await prisma.session.delete({ where: { id: sessionId } }).catch(() => {});
-    }
-  }
-
-  cookieStore.set(SESSION_COOKIE, '', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 0,
-  });
-}
-
-// ─── Backward-compat exports ────────────────────────────────────────
-
+/**
+ * Requires a session AND a specific role (or higher).
+ * Redirects to /login if not auth, /dashboard if not authorized.
+ */
 export async function requireRole(allowedRoles: UserRole | UserRole[]): Promise<Session> {
   const session = await requireSession();
   const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
@@ -191,23 +170,19 @@ export async function requireRole(allowedRoles: UserRole | UserRole[]): Promise<
   return session;
 }
 
-export async function createSession(userId: string): Promise<string> {
-  const session = await prisma.session.create({
-    data: {
-      userId,
-      expiresAt: new Date(Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000),
-    },
-  });
-
-  const signedToken = signSessionToken(session.id);
+export async function destroySession(): Promise<void> {
   const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, signedToken, {
+  const cookie = cookieStore.get(SESSION_COOKIE);
+
+  if (cookie?.value) {
+    await prisma.session.delete({ where: { id: cookie.value } }).catch(() => {});
+  }
+
+  cookieStore.set(SESSION_COOKIE, '', {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
-    maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
+    maxAge: 0,
   });
-
-  return signedToken;
 }

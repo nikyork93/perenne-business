@@ -9,50 +9,51 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        display: ['Fraunces', 'serif'],
-        sans: ['Geist', 'system-ui', 'sans-serif'],
-        mono: ['Geist Mono', 'ui-monospace', 'monospace'],
+        sans: ['Geist', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['Fraunces', 'Georgia', 'serif'],
+        mono: ['"Geist Mono"', 'ui-monospace', 'monospace'],
       },
       colors: {
-        // Liquid Glass palette
-        ink: {
-          DEFAULT: 'rgba(255, 255, 255, 0.96)',
-          dim:    'rgba(255, 255, 255, 0.55)',
-          faint:  'rgba(255, 255, 255, 0.32)',
-          ghost:  'rgba(255, 255, 255, 0.12)',
-        },
-        glass: {
-          bg:       'rgba(255, 255, 255, 0.055)',
-          'bg-hi':  'rgba(255, 255, 255, 0.085)',
-          border:   'rgba(255, 255, 255, 0.09)',
-          hairline: 'rgba(255, 255, 255, 0.18)',
-        },
-        accent: {
-          DEFAULT: '#d4a574',
-          soft:    '#b8885c',
-          glow:    'rgba(212, 165, 116, 0.35)',
-        },
-        danger:  '#ff6b6b',
-        surface: '#0a0a0f',
-        'surface-2': '#0b0b12',
-        'surface-3': '#08080e',
+        // Background layers
+        'ink-bg': '#0a0a0f',
+        'ink-bg-2': '#101015',
+
+        // Text layers
+        ink: '#f4f4f5',
+        'ink-dim': '#a1a1aa',
+        'ink-faint': '#71717a',
+
+        // Liquid glass surface (cool dark)
+        'glass-base': '#18181b',
+        'glass-border': 'rgba(255, 255, 255, 0.08)',
+        'glass-hairline': 'rgba(255, 255, 255, 0.14)',
+
+        // Accent: teal matching Perenne logo gradient (NO MORE GOLD)
+        accent: '#4a7a8c',
+        'accent-bright': '#5a92a8',
+        'accent-dim': '#3a5f6e',
+        'accent-soft': 'rgba(74, 122, 140, 0.15)',
+
+        // Semantic states
+        success: '#34c77c',
+        warning: '#ffb340',
+        danger: '#ff5e5e',
+        info: '#5ac8fa',
       },
-      backdropBlur: {
-        glass: '40px',
+      backgroundImage: {
+        'glass-gradient':
+          'linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%)',
+        'accent-gradient':
+          'linear-gradient(135deg, #4a7a8c 0%, #2c5868 100%)',
       },
       boxShadow: {
-        'glass':       '0 8px 32px rgba(0, 0, 0, 0.35)',
-        'glass-deep':  '0 20px 60px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.4)',
-        'accent-glow': '0 8px 32px rgba(212, 165, 116, 0.35)',
-      },
-      animation: {
-        'rise-in': 'riseIn 0.6s ease both',
-      },
-      keyframes: {
-        riseIn: {
-          from: { opacity: '0', transform: 'translateY(8px)' },
-          to:   { opacity: '1', transform: 'translateY(0)' },
-        },
+        'glass-sm': '0 1px 2px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)',
+        'glass-md':
+          '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)',
+        'glass-lg':
+          '0 10px 30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08)',
+        'accent-glow':
+          '0 8px 24px rgba(74, 122, 140, 0.3), inset 0 1px 0 rgba(255,255,255,0.15)',
       },
     },
   },

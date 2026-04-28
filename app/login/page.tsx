@@ -1,7 +1,7 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, type FormEvent } from 'react';
-import { GlassPanel, Button, Input, Whisper } from '@/components/ui';
 import { PerenneLogo } from '@/components/layout/PerenneLogo';
 
 export default function LoginPage() {
@@ -38,16 +38,28 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-6 bg-ink-bg">
-      <div className="w-full max-w-sm space-y-8">
-        <div className="flex justify-center text-ink">
-          <PerenneLogo variant="extended" height={36} />
-        </div>
+    <main className="min-h-screen flex items-center justify-center p-6 bg-ink-bg relative overflow-hidden">
+      <div
+        className="absolute inset-0 opacity-30 pointer-events-none"
+        style={{
+          background:
+            'radial-gradient(circle at 30% 40%, rgba(74,122,140,0.18) 0%, transparent 50%), radial-gradient(circle at 70% 60%, rgba(44,88,104,0.18) 0%, transparent 50%)',
+        }}
+      />
 
-        <GlassPanel padding="lg" animate>
+      <div className="relative w-full max-w-sm">
+        <Link href="/" className="block mb-10 text-ink">
+          <div className="flex justify-center">
+            <PerenneLogo variant="extended" height={32} />
+          </div>
+        </Link>
+
+        <div className="rounded-3xl border border-glass-border bg-glass-base/50 backdrop-blur-2xl p-8 shadow-glass-lg">
           <div className="mb-6 text-center">
-            <div className="label mb-2 text-ink-faint">Business portal</div>
-            <h1 className="font-display italic text-2xl tracking-tight">
+            <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
+              Business portal
+            </div>
+            <h1 className="font-display italic text-2xl tracking-tight text-ink">
               Sign in
             </h1>
             <p className="mt-2 text-xs text-ink-dim leading-relaxed">
@@ -57,16 +69,16 @@ export default function LoginPage() {
 
           {status === 'sent' ? (
             <div className="space-y-4">
-              <div className="py-2.5 px-4 rounded-lg text-[11px] font-mono border bg-emerald-400/5 border-emerald-400/20 text-emerald-200">
+              <div className="py-3 px-4 rounded-2xl text-[11px] font-mono border bg-emerald-400/5 border-emerald-400/20 text-emerald-200 text-center">
                 ✓ {message}
               </div>
-              <Whisper>
+              <p className="text-[11px] text-ink-faint text-center leading-relaxed">
                 The link expires in 15 minutes. You can close this tab.
-              </Whisper>
+              </p>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <Input
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <input
                 type="email"
                 placeholder="you@company.com"
                 value={email}
@@ -74,28 +86,28 @@ export default function LoginPage() {
                 required
                 autoFocus
                 disabled={status === 'sending'}
+                className="w-full px-4 py-3 rounded-2xl bg-white/[0.04] border border-glass-border text-ink text-sm placeholder-ink-faint focus:outline-none focus:border-accent/50 focus:bg-white/[0.06] transition-all disabled:opacity-50"
               />
 
               {status === 'error' && (
-                <div className="py-2 px-3 rounded-lg text-[11px] font-mono border bg-red-400/5 border-red-400/20 text-red-200">
+                <div className="py-2.5 px-4 rounded-2xl text-[11px] font-mono border bg-red-400/5 border-red-400/20 text-red-200 text-center">
                   ⊘ {message}
                 </div>
               )}
 
-              <Button
+              <button
                 type="submit"
-                variant="primary"
-                block
                 disabled={status === 'sending' || !email.trim()}
+                className="w-full px-5 py-3 rounded-2xl bg-accent text-white text-sm font-medium tracking-wide hover:bg-accent-bright transition-all duration-200 shadow-lg shadow-accent/20 hover:shadow-accent/30 hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
               >
                 {status === 'sending' ? 'Sending…' : 'Send sign-in link →'}
-              </Button>
+              </button>
             </form>
           )}
-        </GlassPanel>
+        </div>
 
-        <p className="text-center text-[10px] text-ink-faint font-mono">
-          New here? Your account is created automatically on first sign-in.
+        <p className="mt-6 text-center text-[10px] text-ink-faint font-mono tracking-widest uppercase">
+          Account auto-created on first sign-in
         </p>
       </div>
     </main>
