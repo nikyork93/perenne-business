@@ -21,7 +21,7 @@ const EMAIL_TONE: Record<EmailStatus, 'success' | 'warning' | 'danger' | 'neutra
 export default async function DistributionDetailPage({ params }: Props) {
   const { id } = await params;
   const session = await requireSession();
-  if (!session.companyId) {
+  if (!session.companyId!) {
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
@@ -36,7 +36,7 @@ export default async function DistributionDetailPage({ params }: Props) {
     },
   });
 
-  if (!batch || (batch.companyId !== session.companyId && session.role !== 'SUPERADMIN')) {
+  if (!batch || (batch.companyId !== session.companyId! && session.role !== 'SUPERADMIN')) {
     const { notFound } = await import('next/navigation');
     notFound();
   }

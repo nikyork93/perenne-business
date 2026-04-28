@@ -8,18 +8,18 @@ import { DEFAULT_COVER_CONFIG } from '@/types/cover';
 
 export default async function CoverPage() {
   const session = await requireSession();
-  if (!session.companyId) {
+  if (!session.companyId!) {
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
 
   const company = await prisma.company.findUnique({
-    where: { id: session.companyId },
+    where: { id: session.companyId! },
   });
 
   // Load current active cover config (if any)
   const activeConfig = await prisma.coverConfig.findFirst({
-    where: { companyId: session.companyId, isActive: true },
+    where: { companyId: session.companyId!, isActive: true },
     orderBy: { version: 'desc' },
   });
 

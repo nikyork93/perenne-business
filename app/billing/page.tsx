@@ -16,7 +16,7 @@ const STATUS_TONE: Record<OrderStatus, 'success' | 'warning' | 'danger' | 'neutr
 
 export default async function BillingPage() {
   const session = await requireSession();
-  if (!session.companyId) {
+  if (!session.companyId!) {
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
@@ -24,7 +24,7 @@ export default async function BillingPage() {
   const [company, orders] = await Promise.all([
     prisma.company.findUnique({ where: { id: session.companyId! } }),
     prisma.order.findMany({
-      where: { companyId: session.companyId },
+      where: { companyId: session.companyId! },
       orderBy: { createdAt: 'desc' },
       include: { _count: { select: { notebookCodes: true } } },
     }),

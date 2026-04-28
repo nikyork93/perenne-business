@@ -7,17 +7,17 @@ import { CodesTable } from '@/components/CodesTable';
 
 export default async function CodesPage() {
   const session = await requireSession();
-  if (!session.companyId) {
+  if (!session.companyId!) {
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
 
   const [company, total, claimed, available, revoked] = await Promise.all([
-    prisma.company.findUnique({ where: { id: session.companyId } }),
-    prisma.notebookCode.count({ where: { companyId: session.companyId } }),
-    prisma.notebookCode.count({ where: { companyId: session.companyId, status: 'CLAIMED' } }),
-    prisma.notebookCode.count({ where: { companyId: session.companyId, status: 'AVAILABLE' } }),
-    prisma.notebookCode.count({ where: { companyId: session.companyId, status: 'REVOKED' } }),
+    prisma.company.findUnique({ where: { id: session.companyId! } }),
+    prisma.notebookCode.count({ where: { companyId: session.companyId! } }),
+    prisma.notebookCode.count({ where: { companyId: session.companyId!, status: 'CLAIMED' } }),
+    prisma.notebookCode.count({ where: { companyId: session.companyId!, status: 'AVAILABLE' } }),
+    prisma.notebookCode.count({ where: { companyId: session.companyId!, status: 'REVOKED' } }),
   ]);
 
   const claimRate = total > 0 ? Math.round((claimed / total) * 100) : 0;

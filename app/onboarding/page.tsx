@@ -6,7 +6,7 @@ export default async function OnboardingPage() {
   const session = await requireSession();
 
   // Already onboarded? Go to dashboard
-  if (session.companyId || session.role === 'SUPERADMIN') {
+  if (session.companyId! || session.role === 'SUPERADMIN') {
     const { redirect } = await import('next/navigation');
     redirect('/dashboard');
   }

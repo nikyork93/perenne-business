@@ -6,15 +6,15 @@ import { TeamClient } from '@/components/TeamClient';
 
 export default async function TeamPage() {
   const session = await requireSession();
-  if (!session.companyId) {
+  if (!session.companyId!) {
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
 
   const [company, members] = await Promise.all([
-    prisma.company.findUnique({ where: { id: session.companyId } }),
+    prisma.company.findUnique({ where: { id: session.companyId! } }),
     prisma.user.findMany({
-      where: { companyId: session.companyId },
+      where: { companyId: session.companyId! },
       select: {
         id: true,
         email: true,

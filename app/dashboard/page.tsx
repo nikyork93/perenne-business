@@ -43,12 +43,12 @@ const ACTION_LABEL: Record<string, string> = {
 export default async function DashboardPage() {
   const session = await requireSession();
 
-  if (!session.companyId && session.role !== 'SUPERADMIN') {
+  if (!session.companyId! && session.role !== 'SUPERADMIN') {
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
 
-  if (!session.companyId && session.role === 'SUPERADMIN') {
+  if (!session.companyId! && session.role === 'SUPERADMIN') {
     const { redirect } = await import('next/navigation');
     redirect('/admin/companies');
   }

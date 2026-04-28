@@ -12,7 +12,7 @@ interface Props {
 
 export default async function StoreSuccessPage({ searchParams }: Props) {
   const session = await requireSession();
-  if (!session.companyId) {
+  if (!session.companyId!) {
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
@@ -28,10 +28,10 @@ export default async function StoreSuccessPage({ searchParams }: Props) {
     : null;
 
   // Ensure the order belongs to this company
-  const isOrderOwned = order?.companyId === session.companyId;
+  const isOrderOwned = order?.companyId === session.companyId!;
 
   const company = await prisma.company.findUnique({
-    where: { id: session.companyId },
+    where: { id: session.companyId! },
   });
 
   const tier = order ? getTier(order.packageType) : null;

@@ -12,13 +12,13 @@ interface Props {
 
 export default async function StorePage({ searchParams }: Props) {
   const session = await requireSession();
-  if (!session.companyId) {
+  if (!session.companyId!) {
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
 
   const company = await prisma.company.findUnique({
-    where: { id: session.companyId },
+    where: { id: session.companyId! },
   });
 
   const params = await searchParams;

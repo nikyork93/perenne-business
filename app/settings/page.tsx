@@ -8,13 +8,13 @@ import { SettingsForm } from '@/components/SettingsForm';
 export default async function SettingsPage() {
   const session = await requireSession();
 
-  if (!session.companyId) {
+  if (!session.companyId!) {
     const { redirect } = await import('next/navigation');
     redirect('/onboarding');
   }
 
   const company = await prisma.company.findUnique({
-    where: { id: session.companyId },
+    where: { id: session.companyId! },
   });
 
   if (!company) {
