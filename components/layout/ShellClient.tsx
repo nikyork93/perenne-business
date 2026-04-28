@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import { PerenneLogo } from '@/components/layout/PerenneLogo';
 
@@ -37,15 +37,28 @@ interface ShellClientProps {
 
 export function ShellClient({ user, children }: ShellClientProps) {
   const pathname = usePathname() || '/';
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const isSuperAdmin = user?.role === 'SUPERADMIN';
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      // POST to /api/auth/logout. NEVER use <Link> for this — Next.js
+      // would prefetch it on render and silently log the user out.
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // even if the call fails, redirect to login
+    }
+    router.push('/login');
+    router.refresh();
+  }
 
   return (
     <div
       className="min-h-screen text-ink relative overflow-x-hidden"
       style={{
-        // Rich layered background — base color + ambient glows.
-        // This is what shows through the liquid-glass panels.
         background: `
           radial-gradient(ellipse 80% 60% at 15% 20%, rgba(74,122,140,0.25) 0%, transparent 60%),
           radial-gradient(ellipse 70% 50% at 85% 80%, rgba(44,88,104,0.20) 0%, transparent 60%),
@@ -54,7 +67,6 @@ export function ShellClient({ user, children }: ShellClientProps) {
         `,
       }}
     >
-      {/* ─── Sidebar (desktop) + drawer (mobile) ─── */}
       <aside
         className={`fixed inset-y-0 left-0 z-30 w-64 flex-col transition-transform duration-200 ease-out ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
@@ -116,17 +128,20 @@ export function ShellClient({ user, children }: ShellClientProps) {
             <div className="text-xs text-ink truncate" title={user?.email || ''}>
               {user?.name || user?.email || 'Unknown'}
             </div>
-            <Link
-              href="/api/auth/logout"
-              className="block mt-2 text-[11px] text-ink-faint hover:text-ink transition font-mono"
+            {/* CRITICAL: button (not Link) to prevent Next.js auto-prefetch
+                from silently triggering logout on render. */}
+            <button
+              type="button"
+              onClick={handleSignOut}
+              disabled={signingOut}
+              className="block mt-2 text-[11px] text-ink-faint hover:text-ink transition font-mono disabled:opacity-50 cursor-pointer"
             >
-              Sign out →
-            </Link>
+              {signingOut ? 'Signing out…' : 'Sign out →'}
+            </button>
           </div>
         </div>
       </aside>
 
-      {/* ─── Mobile top bar ─── */}
       <header
         className="md:hidden sticky top-0 z-20 flex items-center justify-between px-4 py-3"
         style={{
@@ -148,7 +163,6 @@ export function ShellClient({ user, children }: ShellClientProps) {
         <div className="w-6" />
       </header>
 
-      {/* ─── Main content ─── */}
       <main className="md:pl-64 min-h-screen">
         <div className="max-w-7xl mx-auto p-6 md:p-10">{children}</div>
       </main>
