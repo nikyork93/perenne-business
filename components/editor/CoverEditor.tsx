@@ -14,7 +14,6 @@ import {
 // Fabric.js loaded from CDN via <Script>; declare global type
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const fabric: any;
   interface Window {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     fabric: any;
