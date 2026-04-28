@@ -1,18 +1,33 @@
+type ClassValue =
+  | string
+  | number
+  | null
+  | undefined
+  | false
+  | true
+  | ClassValue[]
+  | Record<string, boolean | null | undefined>;
+
 /**
- * Minimal className joiner. Accepts strings, falsy values, conditional objects.
- * Example: cn('foo', isActive && 'active', { 'hidden': !visible })
+ * Composes class names. Accepts strings, arrays (recursively flattened),
+ * conditional `cond && 'class'` patterns, and `Record<string, boolean>` objects.
  */
-export function cn(...inputs: Array<string | false | null | undefined | Record<string, boolean>>): string {
-  const parts: string[] = [];
+export function cn(...inputs: ClassValue[]): string {
+  const out: string[] = [];
   for (const input of inputs) {
     if (!input) continue;
     if (typeof input === 'string') {
-      parts.push(input);
+      out.push(input);
+    } else if (typeof input === 'number') {
+      out.push(String(input));
+    } else if (Array.isArray(input)) {
+      const nested = cn(...input);
+      if (nested) out.push(nested);
     } else if (typeof input === 'object') {
-      for (const [k, v] of Object.entries(input)) {
-        if (v) parts.push(k);
+      for (const [key, value] of Object.entries(input)) {
+        if (value) out.push(key);
       }
     }
   }
-  return parts.join(' ');
+  return out.join(' ');
 }

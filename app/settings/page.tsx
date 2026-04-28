@@ -35,7 +35,6 @@ export default async function SettingsPage() {
           title="Company"
           description="Manage company details, fiscal information, and brand preferences."
         />
-
         <GlassPanel padding="lg">
           <SettingsForm company={company} canEditFiscal={canEditFiscal} />
         </GlassPanel>
