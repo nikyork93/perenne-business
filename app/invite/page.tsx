@@ -4,6 +4,8 @@ import { Suspense, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PerenneLogo } from '@/components/layout/PerenneLogo';
+import { PasswordField } from '@/components/ui/PasswordField';
+import { evaluatePassword } from '@/lib/password';
 
 function InviteContent() {
   const router = useRouter();
@@ -54,8 +56,9 @@ function InviteContent() {
     e.preventDefault();
     setSubmitError('');
 
-    if (password.length < 8) {
-      setSubmitError('Password must be at least 8 characters');
+    const validation = evaluatePassword(password, email);
+    if (!validation.isValid) {
+      setSubmitError(validation.errors[0]);
       return;
     }
     if (password !== confirmPassword) {
@@ -117,26 +120,17 @@ function InviteContent() {
         >
           {loadingState === 'loading' && (
             <div className="text-center py-8">
-              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
-                Verifying invite
-              </div>
+              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">Verifying invite</div>
               <div className="text-sm text-ink-dim">Please wait…</div>
             </div>
           )}
 
           {loadingState === 'invalid' && (
             <div className="text-center py-4">
-              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
-                Invite invalid
-              </div>
-              <h1 className="font-display italic text-2xl tracking-tight text-ink mb-3">
-                Something&apos;s off
-              </h1>
+              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">Invite invalid</div>
+              <h1 className="font-display italic text-2xl tracking-tight text-ink mb-3">Something&apos;s off</h1>
               <p className="text-sm text-ink-dim mb-6">{validationError}</p>
-              <Link
-                href="/login"
-                className="inline-block px-5 py-2.5 rounded-2xl border border-glass-border bg-white/[0.04] text-ink text-sm hover:bg-white/[0.08] transition"
-              >
+              <Link href="/login" className="inline-block px-5 py-2.5 rounded-2xl border border-glass-border bg-white/[0.04] text-ink text-sm hover:bg-white/[0.08] transition">
                 Back to sign in
               </Link>
             </div>
@@ -144,19 +138,10 @@ function InviteContent() {
 
           {loadingState === 'already-used' && (
             <div className="text-center py-4">
-              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
-                Invite already used
-              </div>
-              <h1 className="font-display italic text-2xl tracking-tight text-ink mb-3">
-                You&apos;re all set
-              </h1>
-              <p className="text-sm text-ink-dim mb-6">
-                This invite was already accepted. Sign in normally with your email and password.
-              </p>
-              <Link
-                href="/login"
-                className="inline-block px-5 py-2.5 rounded-2xl bg-accent text-white text-sm hover:bg-accent-bright transition shadow-lg shadow-accent/20"
-              >
+              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">Invite already used</div>
+              <h1 className="font-display italic text-2xl tracking-tight text-ink mb-3">You&apos;re all set</h1>
+              <p className="text-sm text-ink-dim mb-6">This invite was already accepted. Sign in normally with your email and password.</p>
+              <Link href="/login" className="inline-block px-5 py-2.5 rounded-2xl bg-accent text-white text-sm hover:bg-accent-bright transition shadow-lg shadow-accent/20">
                 Sign in →
               </Link>
             </div>
@@ -168,15 +153,13 @@ function InviteContent() {
                 <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
                   {companyName ? `Welcome to ${companyName}` : 'Set up your account'}
                 </div>
-                <h1 className="font-display italic text-2xl tracking-tight text-ink">
-                  Choose a password
-                </h1>
+                <h1 className="font-display italic text-2xl tracking-tight text-ink">Choose a password</h1>
                 <p className="text-xs text-ink-dim mt-2 leading-relaxed">
                   Setting up <span className="font-mono text-ink">{email}</span>
                 </p>
               </div>
 
-              <form onSubmit={handleSubmit} className="space-y-3">
+              <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label className="block text-[11px] text-ink-dim font-medium mb-1.5">
                     Your name <span className="text-ink-faint">(optional)</span>
@@ -187,40 +170,31 @@ function InviteContent() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     disabled={submitting}
-                    className={inputClass}
+                    className="w-full px-4 py-3 rounded-2xl bg-white/[0.04] border border-glass-border text-ink text-sm font-sans placeholder-ink-faint focus:outline-none focus:border-accent/50 focus:bg-white/[0.06] transition-all disabled:opacity-50"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-ink-dim font-medium mb-1.5">
-                    Password <span className="text-ink-faint">(min 8 chars)</span>
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    minLength={8}
-                    disabled={submitting}
-                    className={inputClass}
-                  />
-                </div>
+                <PasswordField
+                  value={password}
+                  onChange={setPassword}
+                  email={email}
+                  label="Password"
+                  showMeter={true}
+                  showSuggest={true}
+                  required
+                  disabled={submitting}
+                />
 
-                <div>
-                  <label className="block text-[11px] text-ink-dim font-medium mb-1.5">
-                    Confirm password
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="••••••••"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
-                    disabled={submitting}
-                    className={inputClass}
-                  />
-                </div>
+                <PasswordField
+                  value={confirmPassword}
+                  onChange={setConfirmPassword}
+                  email={email}
+                  label="Confirm password"
+                  showMeter={false}
+                  showSuggest={false}
+                  required
+                  disabled={submitting}
+                />
 
                 {submitError && (
                   <div className="py-2.5 px-4 rounded-2xl text-[11px] font-mono border bg-red-400/5 border-red-400/20 text-red-200 text-center">
@@ -243,9 +217,6 @@ function InviteContent() {
     </main>
   );
 }
-
-const inputClass =
-  'w-full px-4 py-3 rounded-2xl bg-white/[0.04] border border-glass-border text-ink text-sm font-sans placeholder-ink-faint focus:outline-none focus:border-accent/50 focus:bg-white/[0.06] transition-all disabled:opacity-50';
 
 export default function InvitePage() {
   return (

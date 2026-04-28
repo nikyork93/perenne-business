@@ -1,0 +1,35 @@
+═══════════════════════════════════════════════════════════════════
+SCHEMA UPDATE — add this NEW model to prisma/schema.prisma
+═══════════════════════════════════════════════════════════════════
+
+Open prisma/schema.prisma and ADD the following block at the END of
+the file (or anywhere after the User model — order doesn't matter):
+
+═══════════════════════════════════════════════════════════════════
+
+// ─── Rate limiting / brute-force protection ─────────────────────
+
+model LoginAttempt {
+  id          String   @id @default(cuid())
+  email       String                          // who tried to login
+  ipAddress   String?
+  userAgent   String?
+  success     Boolean  @default(false)
+  action      String?  @default("login")     // "login" | "forgot_password"
+
+  createdAt   DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ipAddress, createdAt])
+  @@index([createdAt])
+}
+
+═══════════════════════════════════════════════════════════════════
+
+After pasting, run:
+
+  npx prisma db push
+
+When prompted, answer Y.
+
+═══════════════════════════════════════════════════════════════════

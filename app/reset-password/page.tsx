@@ -4,6 +4,8 @@ import { Suspense, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PerenneLogo } from '@/components/layout/PerenneLogo';
+import { PasswordField } from '@/components/ui/PasswordField';
+import { evaluatePassword } from '@/lib/password';
 
 function ResetContent() {
   const router = useRouter();
@@ -48,8 +50,9 @@ function ResetContent() {
     e.preventDefault();
     setSubmitError('');
 
-    if (password.length < 8) {
-      setSubmitError('Password must be at least 8 characters');
+    const validation = evaluatePassword(password, email);
+    if (!validation.isValid) {
+      setSubmitError(validation.errors[0]);
       return;
     }
     if (password !== confirmPassword) {
@@ -110,26 +113,17 @@ function ResetContent() {
         >
           {loadingState === 'loading' && (
             <div className="text-center py-8">
-              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
-                Verifying
-              </div>
+              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">Verifying</div>
               <div className="text-sm text-ink-dim">Please wait…</div>
             </div>
           )}
 
           {loadingState === 'invalid' && (
             <div className="text-center py-4">
-              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
-                Link invalid
-              </div>
-              <h1 className="font-display italic text-2xl tracking-tight text-ink mb-3">
-                Reset link expired
-              </h1>
+              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">Link invalid</div>
+              <h1 className="font-display italic text-2xl tracking-tight text-ink mb-3">Reset link expired</h1>
               <p className="text-sm text-ink-dim mb-6">{validationError}</p>
-              <Link
-                href="/forgot-password"
-                className="inline-block px-5 py-2.5 rounded-2xl bg-accent text-white text-sm hover:bg-accent-bright transition shadow-lg shadow-accent/20"
-              >
+              <Link href="/forgot-password" className="inline-block px-5 py-2.5 rounded-2xl bg-accent text-white text-sm hover:bg-accent-bright transition shadow-lg shadow-accent/20">
                 Request a new link →
               </Link>
             </div>
@@ -138,49 +132,36 @@ function ResetContent() {
           {loadingState === 'valid' && !done && (
             <>
               <div className="mb-6 text-center">
-                <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
-                  New password
-                </div>
-                <h1 className="font-display italic text-2xl tracking-tight text-ink">
-                  Reset password
-                </h1>
+                <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">New password</div>
+                <h1 className="font-display italic text-2xl tracking-tight text-ink">Reset password</h1>
                 <p className="text-xs text-ink-dim mt-2 leading-relaxed">
                   Setting a new password for <span className="font-mono text-ink">{email}</span>
                 </p>
               </div>
 
-              <form onSubmit={handleSubmit} className="space-y-3">
-                <div>
-                  <label className="block text-[11px] text-ink-dim font-medium mb-1.5">
-                    New password
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    minLength={8}
-                    autoFocus
-                    disabled={submitting}
-                    className={inputClass}
-                  />
-                </div>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <PasswordField
+                  value={password}
+                  onChange={setPassword}
+                  email={email}
+                  label="New password"
+                  showMeter={true}
+                  showSuggest={true}
+                  autoFocus
+                  required
+                  disabled={submitting}
+                />
 
-                <div>
-                  <label className="block text-[11px] text-ink-dim font-medium mb-1.5">
-                    Confirm password
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="••••••••"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
-                    disabled={submitting}
-                    className={inputClass}
-                  />
-                </div>
+                <PasswordField
+                  value={confirmPassword}
+                  onChange={setConfirmPassword}
+                  email={email}
+                  label="Confirm password"
+                  showMeter={false}
+                  showSuggest={false}
+                  required
+                  disabled={submitting}
+                />
 
                 {submitError && (
                   <div className="py-2.5 px-4 rounded-2xl text-[11px] font-mono border bg-red-400/5 border-red-400/20 text-red-200 text-center">
@@ -201,15 +182,9 @@ function ResetContent() {
 
           {done && (
             <div className="text-center py-4">
-              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">
-                Password updated
-              </div>
-              <h1 className="font-display italic text-2xl tracking-tight text-ink mb-3">
-                You&apos;re all set
-              </h1>
-              <p className="text-sm text-ink-dim mb-6">
-                Redirecting you to sign in…
-              </p>
+              <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-2">Password updated</div>
+              <h1 className="font-display italic text-2xl tracking-tight text-ink mb-3">You&apos;re all set</h1>
+              <p className="text-sm text-ink-dim mb-6">Redirecting you to sign in…</p>
             </div>
           )}
         </div>
@@ -217,9 +192,6 @@ function ResetContent() {
     </main>
   );
 }
-
-const inputClass =
-  'w-full px-4 py-3 rounded-2xl bg-white/[0.04] border border-glass-border text-ink text-sm font-sans placeholder-ink-faint focus:outline-none focus:border-accent/50 focus:bg-white/[0.06] transition-all disabled:opacity-50';
 
 export default function ResetPasswordPage() {
   return (

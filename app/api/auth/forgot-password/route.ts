@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
 import { createResetPasswordToken } from '@/lib/auth';
 import { resetPasswordEmail } from '@/lib/email-templates';
+import { checkForgotPasswordRateLimit, recordForgotPasswordAttempt, extractIpAddress } from '@/lib/rate-limit';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
 
@@ -14,15 +15,27 @@ export async function POST(req: NextRequest) {
   }
 
   const email = body.email?.toLowerCase().trim();
+  const ipAddress = extractIpAddress(req);
+
   if (!email) {
     return NextResponse.json({ error: 'Email is required' }, { status: 400 });
   }
 
-  // Always respond success even if user doesn't exist (security: no email enumeration)
+  // Rate limit check (prevents reset spam attacks)
+  const allowed = await checkForgotPasswordRateLimit(email, ipAddress);
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'Too many reset requests. Try again in 1 hour.' },
+      { status: 429 }
+    );
+  }
+
+  await recordForgotPasswordAttempt(email, ipAddress);
+
+  // Always respond success even if user doesn't exist (no enumeration)
   const resetUrl = await createResetPasswordToken(email);
 
   if (!resetUrl) {
-    // Pretend everything worked — same response time
     await new Promise((r) => setTimeout(r, 200));
     return NextResponse.json({
       success: true,
@@ -30,7 +43,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Send email via Resend
   if (env.RESEND_API_KEY) {
     try {
       const user = await prisma.user.findUnique({ where: { email } });
@@ -51,7 +63,6 @@ export async function POST(req: NextRequest) {
       });
     } catch (err) {
       console.error('[forgot-password] Resend error:', err);
-      // Still respond success — don't leak whether email was sent
     }
   } else {
     console.warn('[forgot-password] RESEND_API_KEY not set — reset URL:', resetUrl);

@@ -1,15 +1,17 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
+import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
 import type { UserRole } from '@prisma/client';
+import { evaluatePassword } from '@/lib/password';
 
 export const SESSION_COOKIE = 'perenne_session';
 const SESSION_DURATION_DAYS = 90;
 const RESET_PASSWORD_DURATION_MINUTES = 60;
 const INVITE_DURATION_DAYS = 7;
+const BCRYPT_ROUNDS = 12; // 12 = ~250ms hash time, very strong vs 10's 50ms
 
 export interface Session {
   userId: string;
@@ -19,16 +21,14 @@ export interface Session {
   companyId: string | null;
 }
 
-// ─── Token generation ──────────────────────────────────────────────
-
 function generateRandomToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-// ─── Password hashing (bcrypt) ─────────────────────────────────────
+// ─── Password hashing ──────────────────────────────────────────────
 
 export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, 10);
+  return bcrypt.hash(password, BCRYPT_ROUNDS);
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
@@ -39,12 +39,26 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   }
 }
 
+/**
+ * Server-side password validation. Re-runs the same checks as evaluatePassword
+ * (which is also used client-side) so the server is the source of truth.
+ */
+export function validatePasswordOrThrow(password: string, email?: string): void {
+  const result = evaluatePassword(password, email);
+  if (!result.isValid) {
+    throw new PasswordValidationError(result.errors);
+  }
+}
+
+export class PasswordValidationError extends Error {
+  constructor(public errors: string[]) {
+    super(errors[0] || 'Password validation failed');
+    this.name = 'PasswordValidationError';
+  }
+}
+
 // ─── Invite tokens ─────────────────────────────────────────────────
 
-/**
- * Creates a fresh invite token for a user (used when admin invites someone).
- * Returns the URL to send via email.
- */
 export async function createInviteToken(userId: string): Promise<string> {
   const token = generateRandomToken();
 
@@ -207,10 +221,7 @@ export async function consumeMagicLink(token: string) {
   });
 
   await prisma.user
-    .update({
-      where: { id: magicLink.user.id },
-      data: { lastLoginAt: new Date() },
-    })
+    .update({ where: { id: magicLink.user.id }, data: { lastLoginAt: new Date() } })
     .catch(() => {});
 
   return {
@@ -222,5 +233,4 @@ export async function consumeMagicLink(token: string) {
   };
 }
 
-// Compat export for code that uses INVITE_DURATION_DAYS
 export { INVITE_DURATION_DAYS };
