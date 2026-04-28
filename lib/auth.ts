@@ -25,16 +25,11 @@ function generateRandomToken(): string {
 
 // ─── Magic link ────────────────────────────────────────────────────
 
-/**
- * Creates a magic link for the given email.
- * Returns the FULL URL to email to the user.
- */
 export async function createMagicLink(email: string): Promise<string> {
   const normalizedEmail = email.toLowerCase().trim();
   const token = generateRandomToken();
   const expiresAt = new Date(Date.now() + MAGIC_LINK_DURATION_MINUTES * 60 * 1000);
 
-  // Find or create user
   let user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
   if (!user) {
     const isSuperadmin = normalizedEmail === env.SUPERADMIN_EMAIL.toLowerCase();
@@ -57,10 +52,6 @@ export async function createMagicLink(email: string): Promise<string> {
   return `${env.NEXT_PUBLIC_APP_URL}/api/auth/verify?token=${token}`;
 }
 
-/**
- * Consumes a magic link token, returning the user info if valid.
- * Does NOT create a session (call createSession separately).
- */
 export async function consumeMagicLink(token: string): Promise<{
   userId: string;
   email: string;
@@ -77,13 +68,11 @@ export async function consumeMagicLink(token: string): Promise<{
   if (magicLink.usedAt) return null;
   if (magicLink.expiresAt < new Date()) return null;
 
-  // Mark as used
   await prisma.magicLink.update({
     where: { id: magicLink.id },
     data: { usedAt: new Date() },
   });
 
-  // Update lastLoginAt
   await prisma.user.update({
     where: { id: magicLink.user.id },
     data: { lastLoginAt: new Date() },
@@ -102,18 +91,22 @@ export async function consumeMagicLink(token: string): Promise<{
 
 /**
  * Creates a session for a user and sets the cookie.
- * Returns the session ID (also the cookie value).
+ * Generates a random token (separate from session.id) used both as DB token
+ * and as cookie value. Returns the token.
  */
 export async function createSession(userId: string): Promise<string> {
-  const session = await prisma.session.create({
+  const sessionToken = generateRandomToken();
+
+  await prisma.session.create({
     data: {
       userId,
+      token: sessionToken,
       expiresAt: new Date(Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000),
     },
   });
 
   const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, session.id, {
+  cookieStore.set(SESSION_COOKIE, sessionToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
@@ -121,7 +114,7 @@ export async function createSession(userId: string): Promise<string> {
     maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
   });
 
-  return session.id;
+  return sessionToken;
 }
 
 export async function getSession(): Promise<Session | null> {
@@ -129,8 +122,9 @@ export async function getSession(): Promise<Session | null> {
   const cookie = cookieStore.get(SESSION_COOKIE);
   if (!cookie?.value) return null;
 
+  // Look up by token (not id) — the cookie contains the random token
   const session = await prisma.session.findUnique({
-    where: { id: cookie.value },
+    where: { token: cookie.value },
     include: { user: true },
   });
 
@@ -157,10 +151,6 @@ export async function requireSession(): Promise<Session> {
   return session;
 }
 
-/**
- * Requires a session AND a specific role (or higher).
- * Redirects to /login if not auth, /dashboard if not authorized.
- */
 export async function requireRole(allowedRoles: UserRole | UserRole[]): Promise<Session> {
   const session = await requireSession();
   const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
@@ -175,7 +165,7 @@ export async function destroySession(): Promise<void> {
   const cookie = cookieStore.get(SESSION_COOKIE);
 
   if (cookie?.value) {
-    await prisma.session.delete({ where: { id: cookie.value } }).catch(() => {});
+    await prisma.session.delete({ where: { token: cookie.value } }).catch(() => {});
   }
 
   cookieStore.set(SESSION_COOKIE, '', {
