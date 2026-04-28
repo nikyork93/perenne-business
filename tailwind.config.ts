@@ -24,7 +24,9 @@ const config: Config = {
         'ink-faint': '#71717a',
 
         // Liquid glass surface (cool dark)
+        // glass-base is the new canonical name, glass-bg kept as alias for legacy CSS
         'glass-base': '#18181b',
+        'glass-bg': '#18181b',
         'glass-border': 'rgba(255, 255, 255, 0.08)',
         'glass-hairline': 'rgba(255, 255, 255, 0.14)',
 
