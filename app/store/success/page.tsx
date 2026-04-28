@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Shell } from '@/components/layout/Shell';
@@ -12,28 +13,25 @@ interface Props {
 
 export default async function StoreSuccessPage({ searchParams }: Props) {
   const session = await requireSession();
-  if (!session.companyId!) {
-    const { redirect } = await import('next/navigation');
+  if (!session.companyId) {
     redirect('/onboarding');
   }
 
+  const companyId = session.companyId;
   const params = await searchParams;
   const orderId = params.order_id;
 
-  const order = orderId
-    ? await prisma.order.findUnique({
-        where: { id: orderId },
-        include: { notebookCodes: { select: { id: true } } },
-      })
-    : null;
+  const [company, order] = await Promise.all([
+    prisma.company.findUnique({ where: { id: companyId } }),
+    orderId
+      ? prisma.order.findUnique({
+          where: { id: orderId },
+          include: { notebookCodes: { select: { id: true } } },
+        })
+      : Promise.resolve(null),
+  ]);
 
-  // Ensure the order belongs to this company
-  const isOrderOwned = order?.companyId === session.companyId!;
-
-  const company = await prisma.company.findUnique({
-    where: { id: session.companyId! },
-  });
-
+  const isOrderOwned = order?.companyId === companyId;
   const tier = order ? getTier(order.packageType) : null;
   const isPaid = order?.status === 'PAID';
   const isPending = order?.status === 'PENDING';
@@ -77,35 +75,24 @@ export default async function StoreSuccessPage({ searchParams }: Props) {
               </div>
               <div>
                 <div className="label mb-1.5">Total</div>
-                <div className="font-display italic text-xl">
-                  {formatEuros(order.totalPriceCents)}
-                </div>
+                <div className="font-display italic text-xl">{formatEuros(order.totalPriceCents)}</div>
               </div>
               <div>
                 <div className="label mb-1.5">Codes generated</div>
-                <div className="font-display italic text-xl">
-                  {order.notebookCodes.length}
-                </div>
+                <div className="font-display italic text-xl">{order.notebookCodes.length}</div>
               </div>
             </div>
 
             {isPending && (
               <div className="pt-4 border-t border-glass-border">
-                <Whisper>
-                  Payment is processing. This page will refresh automatically
-                  once Stripe confirms the transaction (usually within a few seconds).
-                </Whisper>
+                <Whisper>Payment is processing. This page refreshes automatically.</Whisper>
               </div>
             )}
 
             {isPaid && (
               <div className="pt-4 border-t border-glass-border flex gap-3">
-                <Link href="/codes">
-                  <Button variant="primary">View codes →</Button>
-                </Link>
-                <Link href="/distribution">
-                  <Button>Distribute to team</Button>
-                </Link>
+                <Link href="/codes"><Button variant="primary">View codes →</Button></Link>
+                <Link href="/distribution"><Button>Distribute to team</Button></Link>
                 {order.stripeInvoiceUrl && (
                   <a href={order.stripeInvoiceUrl} target="_blank" rel="noopener">
                     <Button variant="ghost">Invoice ↗</Button>
@@ -117,10 +104,7 @@ export default async function StoreSuccessPage({ searchParams }: Props) {
         )}
       </div>
 
-      {/* Auto-refresh if still pending (webhook may be late) */}
-      {isPending && (
-        <meta httpEquiv="refresh" content="5" />
-      )}
+      {isPending && <meta httpEquiv="refresh" content="5" />}
     </Shell>
   );
 }

@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Shell } from '@/components/layout/Shell';
@@ -6,15 +7,16 @@ import { TeamClient } from '@/components/TeamClient';
 
 export default async function TeamPage() {
   const session = await requireSession();
-  if (!session.companyId!) {
-    const { redirect } = await import('next/navigation');
+  if (!session.companyId) {
     redirect('/onboarding');
   }
 
+  const companyId = session.companyId;
+
   const [company, members] = await Promise.all([
-    prisma.company.findUnique({ where: { id: session.companyId! } }),
+    prisma.company.findUnique({ where: { id: companyId } }),
     prisma.user.findMany({
-      where: { companyId: session.companyId! },
+      where: { companyId },
       select: {
         id: true,
         email: true,
@@ -40,7 +42,7 @@ export default async function TeamPage() {
       <PageHeader
         eyebrow="Settings · Team"
         title="Team members"
-        description="Invite admins to help you manage codes and distribution. Only the OWNER can invite or remove team members."
+        description="Invite admins to help you manage codes and distribution."
       />
 
       <TeamClient

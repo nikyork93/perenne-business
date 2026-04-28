@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Shell } from '@/components/layout/Shell';
@@ -43,17 +44,14 @@ const ACTION_LABEL: Record<string, string> = {
 export default async function DashboardPage() {
   const session = await requireSession();
 
-  if (!session.companyId! && session.role !== 'SUPERADMIN') {
-    const { redirect } = await import('next/navigation');
+  if (!session.companyId && session.role !== 'SUPERADMIN') {
     redirect('/onboarding');
   }
-
-  if (!session.companyId! && session.role === 'SUPERADMIN') {
-    const { redirect } = await import('next/navigation');
+  if (!session.companyId && session.role === 'SUPERADMIN') {
     redirect('/admin/companies');
   }
 
-  const companyId = session.companyId!;
+  const companyId = session.companyId as string;
 
   const [company, totalCodes, claimedCodes, availableCodes, ordersCount, paidOrdersSum, recentOrders, recentActivity, lastDistribution] = await Promise.all([
     prisma.company.findUnique({ where: { id: companyId } }),
@@ -151,9 +149,7 @@ export default async function DashboardPage() {
                 <GlassPanel padding="lg">
                   <div className="flex items-center justify-between mb-3">
                     <SectionLabel>Recent orders</SectionLabel>
-                    <Link href="/billing" className="text-[11px] text-ink-faint hover:text-ink">
-                      View all →
-                    </Link>
+                    <Link href="/billing" className="text-[11px] text-ink-faint hover:text-ink">View all →</Link>
                   </div>
                   {recentOrders.length === 0 ? (
                     <Whisper>No orders yet.</Whisper>
@@ -165,9 +161,7 @@ export default async function DashboardPage() {
                           <li key={o.id} className="flex items-center justify-between text-xs">
                             <div className="flex-1 min-w-0">
                               <div className="font-display italic truncate">{tier?.name ?? o.packageType}</div>
-                              <div className="text-[10px] text-ink-faint">
-                                {new Date(o.createdAt).toLocaleDateString('en-GB')}
-                              </div>
+                              <div className="text-[10px] text-ink-faint">{new Date(o.createdAt).toLocaleDateString('en-GB')}</div>
                             </div>
                             <div className="text-right">
                               <div className="font-mono">{formatEuros(o.totalPriceCents)}</div>
@@ -204,7 +198,7 @@ export default async function DashboardPage() {
                   <GlassPanel padding="lg" className="border-accent/20 bg-accent/5">
                     <SectionLabel>Running low</SectionLabel>
                     <p className="mt-2 text-xs text-ink-dim mb-4">
-                      Only {availableCodes} code{availableCodes !== 1 ? 's' : ''} left. Buy another pack to keep onboarding employees.
+                      Only {availableCodes} code{availableCodes !== 1 ? 's' : ''} left.
                     </p>
                     <Link href="/store"><Button variant="primary" block size="sm">Buy more codes →</Button></Link>
                   </GlassPanel>
@@ -231,9 +225,7 @@ function OnboardingStep({
   return (
     <div className={`p-4 rounded-lg border ${disabled ? 'border-glass-border/50 opacity-60' : 'border-glass-border bg-white/[0.02]'}`}>
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-[10px] font-mono text-accent w-5 h-5 rounded-full border border-accent/30 flex items-center justify-center">
-          {num}
-        </span>
+        <span className="text-[10px] font-mono text-accent w-5 h-5 rounded-full border border-accent/30 flex items-center justify-center">{num}</span>
         <div className="label">{title}</div>
       </div>
       <p className="text-[11px] text-ink-dim leading-relaxed mb-3">{description}</p>

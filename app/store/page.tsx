@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
@@ -12,14 +13,12 @@ interface Props {
 
 export default async function StorePage({ searchParams }: Props) {
   const session = await requireSession();
-  if (!session.companyId!) {
-    const { redirect } = await import('next/navigation');
+  if (!session.companyId) {
     redirect('/onboarding');
   }
 
-  const company = await prisma.company.findUnique({
-    where: { id: session.companyId! },
-  });
+  const companyId = session.companyId;
+  const company = await prisma.company.findUnique({ where: { id: companyId } });
 
   const params = await searchParams;
   const cancelled = params.cancelled === '1';
@@ -33,7 +32,7 @@ export default async function StorePage({ searchParams }: Props) {
       <PageHeader
         eyebrow="Store"
         title="Buy notebook codes"
-        description="Choose a pack. Each code unlocks one branded notebook for one employee — for life. Like a real paper notebook."
+        description="Choose a pack. Each code unlocks one branded notebook for one employee — for life."
       />
 
       {cancelled && (
@@ -56,7 +55,6 @@ export default async function StorePage({ searchParams }: Props) {
 
       <div className="mt-10 pt-6 border-t border-glass-border text-[11px] text-ink-faint font-mono">
         All prices in EUR, VAT reverse-charge for EU B2B.
-        Volume pricing available for 500+ codes — contact business@perenne.app.
       </div>
     </Shell>
   );

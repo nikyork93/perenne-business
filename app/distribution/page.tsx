@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Shell } from '@/components/layout/Shell';
@@ -6,18 +7,19 @@ import { DistributionClient } from '@/components/DistributionClient';
 
 export default async function DistributionPage() {
   const session = await requireSession();
-  if (!session.companyId!) {
-    const { redirect } = await import('next/navigation');
+  if (!session.companyId) {
     redirect('/onboarding');
   }
 
+  const companyId = session.companyId;
+
   const [company, availableCodes, batches] = await Promise.all([
-    prisma.company.findUnique({ where: { id: session.companyId! } }),
+    prisma.company.findUnique({ where: { id: companyId } }),
     prisma.notebookCode.count({
-      where: { companyId: session.companyId!, status: 'AVAILABLE', distributionId: null },
+      where: { companyId, status: 'AVAILABLE', distributionId: null },
     }),
     prisma.distributionBatch.findMany({
-      where: { companyId: session.companyId! },
+      where: { companyId },
       orderBy: { createdAt: 'desc' },
       take: 20,
     }),

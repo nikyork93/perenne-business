@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Shell } from '@/components/layout/Shell';
@@ -8,22 +9,21 @@ import { DEFAULT_COVER_CONFIG } from '@/types/cover';
 
 export default async function CoverPage() {
   const session = await requireSession();
-  if (!session.companyId!) {
-    const { redirect } = await import('next/navigation');
+
+  if (!session.companyId) {
     redirect('/onboarding');
   }
 
-  const company = await prisma.company.findUnique({
-    where: { id: session.companyId! },
-  });
+  const companyId = session.companyId;
 
-  // Load current active cover config (if any)
-  const activeConfig = await prisma.coverConfig.findFirst({
-    where: { companyId: session.companyId!, isActive: true },
-    orderBy: { version: 'desc' },
-  });
+  const [company, activeConfig] = await Promise.all([
+    prisma.company.findUnique({ where: { id: companyId } }),
+    prisma.coverConfig.findFirst({
+      where: { companyId, isActive: true },
+      orderBy: { version: 'desc' },
+    }),
+  ]);
 
-  // Hydrate into editor format
   const initialConfig: CoverConfigData = activeConfig
     ? {
         version: activeConfig.version,
