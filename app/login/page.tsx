@@ -1,115 +1,103 @@
 'use client';
 
-import { useState, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useState, type FormEvent } from 'react';
 import { GlassPanel, Button, Input, Whisper } from '@/components/ui';
+import { PerenneLogo } from '@/components/layout/PerenneLogo';
 
-function LoginForm() {
-  const params = useSearchParams();
-  const errorParam = params.get('error');
-
+export default function LoginPage() {
   const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(errorParam);
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [message, setMessage] = useState('');
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setLoading(true);
-    setError(null);
+    if (!email.trim()) return;
+
+    setStatus('sending');
+    setMessage('');
 
     try {
       const res = await fetch('/api/auth/request-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
       });
+
       const data = await res.json();
+
       if (!res.ok) {
-        setError(data.error || 'Something went wrong.');
-      } else {
-        setSent(true);
+        throw new Error(data.error || 'Failed to send login link');
       }
-    } catch {
-      setError('Network error. Please try again.');
-    } finally {
-      setLoading(false);
+
+      setStatus('sent');
+      setMessage(data.message || 'Check your email for a sign-in link.');
+    } catch (err) {
+      setStatus('error');
+      setMessage(err instanceof Error ? err.message : 'Something went wrong');
     }
   }
 
-  if (sent) {
-    return (
-      <>
-        <div className="label mb-2 text-accent">Link sent</div>
-        <h1 className="font-display italic text-4xl tracking-tight mb-4">
-          Check your inbox
-        </h1>
-        <p className="text-sm text-ink-dim leading-relaxed mb-2">
-          We sent a sign-in link to <span className="text-ink font-mono text-xs">{email}</span>.
-        </p>
-        <p className="text-sm text-ink-dim leading-relaxed">
-          Click it to continue. The link expires in 15 minutes and can only be used once.
-        </p>
-        <div className="mt-6 pt-5 border-t border-glass-border">
-          <button
-            type="button"
-            onClick={() => { setSent(false); setEmail(''); }}
-            className="text-xs text-ink-faint hover:text-ink transition-colors"
-          >
-            Use a different email →
-          </button>
+  return (
+    <main className="min-h-screen flex items-center justify-center p-6 bg-ink-bg">
+      <div className="w-full max-w-sm space-y-8">
+        <div className="flex justify-center text-ink">
+          <PerenneLogo variant="extended" height={36} />
         </div>
-      </>
-    );
-  }
 
-  return (
-    <form onSubmit={handleSubmit} noValidate>
-      <div className="label mb-2">Sign in</div>
-      <h1 className="font-display italic text-4xl tracking-tight mb-4">
-        Welcome back
-      </h1>
-      <p className="text-sm text-ink-dim leading-relaxed mb-6">
-        Enter your email and we&apos;ll send a sign-in link.
-        No passwords, ever.
-      </p>
+        <GlassPanel padding="lg" animate>
+          <div className="mb-6 text-center">
+            <div className="label mb-2 text-ink-faint">Business portal</div>
+            <h1 className="font-display italic text-2xl tracking-tight">
+              Sign in
+            </h1>
+            <p className="mt-2 text-xs text-ink-dim leading-relaxed">
+              Enter your work email and we&apos;ll send you a one-click sign-in link.
+            </p>
+          </div>
 
-      <Input
-        type="email"
-        label="Email"
-        placeholder="you@company.com"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        required
-        autoFocus
-        autoComplete="email"
-        disabled={loading}
-        error={error ?? undefined}
-      />
+          {status === 'sent' ? (
+            <div className="space-y-4">
+              <div className="py-2.5 px-4 rounded-lg text-[11px] font-mono border bg-emerald-400/5 border-emerald-400/20 text-emerald-200">
+                ✓ {message}
+              </div>
+              <Whisper>
+                The link expires in 15 minutes. You can close this tab.
+              </Whisper>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <Input
+                type="email"
+                placeholder="you@company.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoFocus
+                disabled={status === 'sending'}
+              />
 
-      <div className="mt-5">
-        <Button type="submit" variant="primary" block loading={loading} disabled={!email || loading}>
-          Send sign-in link
-        </Button>
+              {status === 'error' && (
+                <div className="py-2 px-3 rounded-lg text-[11px] font-mono border bg-red-400/5 border-red-400/20 text-red-200">
+                  ⊘ {message}
+                </div>
+              )}
+
+              <Button
+                type="submit"
+                variant="primary"
+                block
+                disabled={status === 'sending' || !email.trim()}
+              >
+                {status === 'sending' ? 'Sending…' : 'Send sign-in link →'}
+              </Button>
+            </form>
+          )}
+        </GlassPanel>
+
+        <p className="text-center text-[10px] text-ink-faint font-mono">
+          New here? Your account is created automatically on first sign-in.
+        </p>
       </div>
-
-      <div className="mt-8 pt-5 border-t border-glass-border">
-        <Whisper>
-          First time here? Just enter your email — an account will be created.
-        </Whisper>
-      </div>
-    </form>
-  );
-}
-
-export default function LoginPage() {
-  return (
-    <main className="min-h-screen flex items-center justify-center p-6">
-      <GlassPanel animate padding="lg" className="max-w-md w-full">
-        <Suspense fallback={null}>
-          <LoginForm />
-        </Suspense>
-      </GlassPanel>
     </main>
   );
 }

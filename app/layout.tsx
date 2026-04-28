@@ -10,7 +10,6 @@ export const metadata: Metadata = {
   icons: [
     { rel: 'icon', type: 'image/svg+xml', url: '/favicon.svg' },
   ],
-  // B2B portal — block all crawlers (authenticated app, no public content)
   robots: {
     index: false,
     follow: false,
@@ -43,11 +42,7 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen bg-surface text-ink antialiased">
-        <div className="atmosphere" aria-hidden="true" />
-        <div className="grain" aria-hidden="true" />
-        {children}
-      </body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }
