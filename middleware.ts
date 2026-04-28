@@ -3,17 +3,16 @@ import { NextResponse, type NextRequest } from 'next/server';
 /**
  * Route protection + security headers.
  *
- * Public paths: landing `/`, `/login`, `/design`, auth API endpoints.
+ * Public paths: landing, login, invite acceptance, password recovery, design preview.
  * Everything else: redirects to /login if no session cookie present.
- *
- * NOTE: We only check for cookie presence here (Edge runtime).
- * Full session validation happens in page components via `requireSession()`
- * because Prisma doesn't run on the Edge.
  */
 
 const PUBLIC_PATHS = new Set([
   '/',
   '/login',
+  '/invite',
+  '/forgot-password',
+  '/reset-password',
   '/design',
   '/favicon.ico',
   '/favicon.svg',
@@ -21,9 +20,9 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 const PUBLIC_PREFIXES = [
-  '/api/auth/',          // login, verify, logout are public
-  '/api/codes/claimed',  // worker webhook (HMAC-authed)
-  '/_next/',             // Next.js internals
+  '/api/auth/',           // login, accept-invite, forgot-password, reset-password are public
+  '/api/codes/claimed',   // worker webhook (HMAC-authed)
+  '/_next/',
   '/fonts/',
   '/images/',
 ];
@@ -33,7 +32,6 @@ const SESSION_COOKIE = 'perenne_session';
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Security headers applied to every response
   const response = NextResponse.next();
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('X-Frame-Options', 'DENY');
@@ -44,12 +42,9 @@ export function middleware(req: NextRequest) {
     'camera=(), microphone=(), geolocation=(), interest-cohort=()'
   );
 
-  // Allow public paths through
   if (PUBLIC_PATHS.has(pathname)) return response;
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return response;
 
-  // Admin paths: need session; role check happens server-side
-  // (middleware can't query DB on Edge runtime)
   const hasSession = req.cookies.get(SESSION_COOKIE);
 
   if (!hasSession) {
@@ -61,7 +56,6 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Run on everything except: Next.js statics, common public assets, Stripe webhook (needs raw body)
   matcher: [
     '/((?!_next/static|_next/image|favicon\\.ico|favicon\\.svg|robots\\.txt|api/stripe/webhook).*)',
   ],

@@ -1,0 +1,54 @@
+// SCHEMA UPDATE — paste these new fields into your existing prisma/schema.prisma
+// inside the User model. Then run: npx prisma db push
+//
+// User model — add these fields:
+//   passwordHash       String?
+//   isActive           Boolean   @default(true)
+//   avatarUrl          String?
+//   inviteToken        String?   @unique
+//   inviteAcceptedAt   DateTime?
+//   resetPasswordToken      String?   @unique
+//   resetPasswordExpiresAt  DateTime?
+//
+// Full updated User model:
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  role         UserRole @default(OWNER)
+
+  // Password authentication
+  passwordHash       String?      // null until user accepts invite and sets password
+  isActive           Boolean   @default(true)
+  avatarUrl          String?
+
+  // Invite flow (replaces magic link as primary auth)
+  inviteToken        String?   @unique
+  inviteAcceptedAt   DateTime?
+
+  // Password reset (only magic-link-style flow remaining, only for forgotten passwords)
+  resetPasswordToken      String?   @unique
+  resetPasswordExpiresAt  DateTime?
+
+  // Company association (null for SUPERADMIN)
+  companyId    String?
+  company      Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Session & activation
+  sessions     Session[]
+  magicLinks   MagicLink[]
+
+  // Invite tracking (legacy)
+  invitedByEmail  String?
+  invitedAt       DateTime?
+
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([email])
+  @@index([companyId])
+  @@index([inviteToken])
+  @@index([resetPasswordToken])
+}

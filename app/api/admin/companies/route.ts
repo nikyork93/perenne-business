@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
-import { requireRole, createMagicLink } from '@/lib/auth';
+import { requireRole, createInviteToken } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { slugify } from '@/lib/slug';
-import { ownerInviteEmail } from '@/lib/email-templates';
+import { inviteEmail } from '@/lib/email-templates';
 import { env } from '@/lib/env';
 
 interface CreateCompanyBody {
@@ -21,10 +21,9 @@ interface CreateCompanyBody {
   primaryColor?: string;
   logoSymbolUrl?: string;
   logoExtendedUrl?: string;
-  // Owner section
   ownerEmail: string;
   ownerName?: string;
-  sendMagicLink?: boolean;
+  sendInvite?: boolean;
 }
 
 export async function POST(req: NextRequest) {
@@ -37,7 +36,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  // Validation
   if (!body.name?.trim()) {
     return NextResponse.json({ error: 'Company name is required' }, { status: 400 });
   }
@@ -47,17 +45,14 @@ export async function POST(req: NextRequest) {
 
   const ownerEmail = body.ownerEmail.toLowerCase().trim();
 
-  // Generate or validate slug
   let slug = body.slug?.trim() || slugify(body.name);
   if (!slug) slug = `company-${Date.now()}`;
 
-  // Ensure slug uniqueness — append suffix if collision
   const existing = await prisma.company.findUnique({ where: { slug } });
   if (existing) {
     slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
   }
 
-  // Create company
   const company = await prisma.company.create({
     data: {
       name: body.name.trim(),
@@ -77,7 +72,7 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Create or attach owner user
+  // Create or attach owner user (with passwordHash:null until they accept invite)
   let owner = await prisma.user.findUnique({ where: { email: ownerEmail } });
   if (!owner) {
     owner = await prisma.user.create({
@@ -88,6 +83,7 @@ export async function POST(req: NextRequest) {
         companyId: company.id,
         invitedByEmail: session.email,
         invitedAt: new Date(),
+        isActive: true,
       },
     });
   } else if (!owner.companyId) {
@@ -102,7 +98,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Audit log
   await prisma.auditLog
     .create({
       data: {
@@ -116,53 +111,62 @@ export async function POST(req: NextRequest) {
     })
     .catch(() => {});
 
-  // Optional: send magic link email via Resend
-  let magicLinkUrl: string | null = null;
+  // Generate invite token + send email
+  let inviteUrl: string | null = null;
   let emailStatus: 'sent' | 'failed' | 'skipped' = 'skipped';
   let emailError: string | null = null;
 
-  if (body.sendMagicLink !== false) {
+  if (body.sendInvite !== false) {
     try {
-      magicLinkUrl = await createMagicLink(ownerEmail);
+      // Only create invite if user hasn't already accepted one (i.e. has no passwordHash yet)
+      if (!owner.passwordHash) {
+        inviteUrl = await createInviteToken(owner.id);
 
-      if (env.RESEND_API_KEY) {
-        const resend = new Resend(env.RESEND_API_KEY);
-        const { subject, html, text } = ownerInviteEmail({
-          companyName: company.name,
-          ownerName: owner.name,
-          magicLinkUrl,
-          invitedBy: session.name || 'The Perenne team',
-        });
+        if (env.RESEND_API_KEY) {
+          const resend = new Resend(env.RESEND_API_KEY);
+          const { subject, html, text } = inviteEmail({
+            recipientName: owner.name,
+            recipientEmail: ownerEmail,
+            companyName: company.name,
+            inviteUrl,
+            invitedByName: session.name,
+            invitedByEmail: session.email,
+          });
 
-        const result = await resend.emails.send({
-          from: env.EMAIL_FROM || 'Perenne Business <onboarding@resend.dev>',
-          to: ownerEmail,
-          subject,
-          html,
-          text,
-        });
+          const result = await resend.emails.send({
+            from: env.EMAIL_FROM || 'Perenne Business <business@perenne.app>',
+            to: ownerEmail,
+            replyTo: 'nicholas@perenne.app',
+            subject,
+            html,
+            text,
+          });
 
-        if (result.error) {
-          emailStatus = 'failed';
-          emailError = result.error.message;
-          console.error('[admin/companies POST] Resend error:', result.error);
+          if (result.error) {
+            emailStatus = 'failed';
+            emailError = result.error.message;
+            console.error('[admin/companies POST] Resend error:', result.error);
+          } else {
+            emailStatus = 'sent';
+          }
         } else {
-          emailStatus = 'sent';
+          emailStatus = 'failed';
+          emailError = 'RESEND_API_KEY not configured';
         }
       } else {
-        emailStatus = 'failed';
-        emailError = 'RESEND_API_KEY not configured';
+        emailStatus = 'skipped';
+        emailError = 'User already has a password — no invite needed';
       }
     } catch (err) {
       emailStatus = 'failed';
       emailError = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[admin/companies POST] Magic link error:', err);
+      console.error('[admin/companies POST] Invite error:', err);
     }
   }
 
   return NextResponse.json({
     company,
     owner: { id: owner.id, email: owner.email, name: owner.name, role: owner.role },
-    email: { status: emailStatus, error: emailError, magicLinkUrl },
+    email: { status: emailStatus, error: emailError, inviteUrl },
   });
 }
