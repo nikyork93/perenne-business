@@ -6,7 +6,7 @@ import { env } from '@/lib/env';
 import type { UserRole } from '@prisma/client';
 
 export const SESSION_COOKIE = 'perenne_session';
-const SESSION_DURATION_DAYS = 30;
+const SESSION_DURATION_DAYS = 90; // extended from 30 to 90 — passwordless UX
 const MAGIC_LINK_DURATION_MINUTES = 15;
 
 export interface Session {
@@ -85,10 +85,6 @@ export async function consumeMagicLink(token: string): Promise<{
 
 // ─── Session ───────────────────────────────────────────────────────
 
-/**
- * Creates a session for a user and sets the cookie.
- * Generates a random token used both as DB token and cookie value.
- */
 export async function createSession(userId: string): Promise<string> {
   const sessionToken = generateRandomToken();
 
@@ -112,31 +108,19 @@ export async function createSession(userId: string): Promise<string> {
   return sessionToken;
 }
 
-/**
- * Reads session from cookie and validates it against DB.
- * Uses findFirst (works regardless of whether `token` is @unique in schema).
- * Logs errors to help diagnose silent failures.
- */
 export async function getSession(): Promise<Session | null> {
   try {
     const cookieStore = await cookies();
     const cookie = cookieStore.get(SESSION_COOKIE);
-    if (!cookie?.value) {
-      return null;
-    }
+    if (!cookie?.value) return null;
 
     const session = await prisma.session.findFirst({
       where: { token: cookie.value },
       include: { user: true },
     });
 
-    if (!session) {
-      console.log('[getSession] Cookie present but no matching session in DB');
-      return null;
-    }
-
+    if (!session) return null;
     if (session.expiresAt < new Date()) {
-      console.log('[getSession] Session expired, removing');
       await prisma.session.delete({ where: { id: session.id } }).catch(() => {});
       return null;
     }
@@ -176,7 +160,6 @@ export async function destroySession(): Promise<void> {
   const cookie = cookieStore.get(SESSION_COOKIE);
 
   if (cookie?.value) {
-    // deleteMany works whether token is @unique or not
     await prisma.session
       .deleteMany({ where: { token: cookie.value } })
       .catch(() => {});
