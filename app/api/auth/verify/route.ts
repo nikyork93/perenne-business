@@ -1,42 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { consumeMagicLink, createSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { env } from '@/lib/env';
-import { createSession } from '@/lib/auth';
 
-export const runtime = 'nodejs';
-
+/**
+ * GET /api/auth/verify?token=...
+ *
+ * Validates the magic link token, creates a session cookie,
+ * and redirects the user based on their state:
+ * - SUPERADMIN with no company → /admin/companies
+ * - User with no company → /onboarding
+ * - User with company → /dashboard
+ */
 export async function GET(req: NextRequest) {
-  const token = req.nextUrl.searchParams.get('token');
+  const { searchParams, origin } = new URL(req.url);
+  const token = searchParams.get('token');
 
-  // Redirect helper with message
-  const redirectError = (msg: string) =>
-    NextResponse.redirect(`${env.NEXT_PUBLIC_APP_URL}/login?error=${encodeURIComponent(msg)}`);
+  if (!token) {
+    return NextResponse.redirect(`${origin}/login?error=missing_token`);
+  }
 
-  if (!token) return redirectError('Missing token.');
+  try {
+    // Step 1: validate magic link, get user info
+    const userInfo = await consumeMagicLink(token);
 
-  const link = await prisma.magicLink.findUnique({
-    where: { token },
-    include: { user: true },
-  });
+    if (!userInfo) {
+      return NextResponse.redirect(`${origin}/login?error=invalid_or_expired`);
+    }
 
-  if (!link) return redirectError('Invalid or expired link.');
-  if (link.usedAt) return redirectError('This link has already been used.');
-  if (link.expiresAt < new Date()) return redirectError('This link has expired.');
+    // Step 2: create session (sets cookie)
+    await createSession(userInfo.userId);
 
-  // Mark link as used (one-time)
-  await prisma.magicLink.update({
-    where: { id: link.id },
-    data: { usedAt: new Date() },
-  });
+    // Step 3: log audit (best-effort, ignore failures)
+    await prisma.auditLog
+      .create({
+        data: {
+          companyId: userInfo.companyId ?? null,
+          actorEmail: userInfo.email,
+          actorRole: userInfo.role,
+          action: 'auth.login',
+          targetType: 'User',
+          targetId: userInfo.userId,
+        },
+      })
+      .catch(() => {});
 
-  // Create session (writes cookie)
-  await createSession(link.user);
+    // Step 4: smart redirect based on user state
+    let destination = '/dashboard';
+    if (userInfo.role === 'SUPERADMIN' && !userInfo.companyId) {
+      destination = '/admin/companies';
+    } else if (!userInfo.companyId) {
+      destination = '/onboarding';
+    }
 
-  // Redirect to app
-  // If user hasn't set up a company yet, send them to /onboarding; else /dashboard
-  const destination = link.user.companyId || link.user.role === 'SUPERADMIN'
-    ? '/dashboard'
-    : '/onboarding';
-
-  return NextResponse.redirect(`${env.NEXT_PUBLIC_APP_URL}${destination}`);
+    return NextResponse.redirect(`${origin}${destination}`);
+  } catch (err) {
+    console.error('[/api/auth/verify] Error:', err);
+    return NextResponse.redirect(`${origin}/login?error=server_error`);
+  }
 }
