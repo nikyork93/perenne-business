@@ -43,7 +43,7 @@ export default async function DistributionDetailPage({ params }: Props) {
 
   // Dedupe logs by recipientEmail, keeping the most recent attempt per email
   // (one email may have multiple logs if resend-failed was called)
-  const latestPerRecipient = new Map<string, typeof batch!.emailLogs[0]>();
+  const latestPerRecipient = new Map<string, (typeof batch.emailLogs)[number]>();
   for (const log of batch!.emailLogs) {
     const existing = latestPerRecipient.get(log.recipientEmail);
     if (!existing || log.createdAt > existing.createdAt) {
