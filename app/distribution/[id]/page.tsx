@@ -36,15 +36,15 @@ export default async function DistributionDetailPage({ params }: Props) {
     },
   });
 
-  if (!batch || (batch.companyId !== session.companyId! && session.role !== 'SUPERADMIN')) {
+  if (!batch || (batch!.companyId !== session.companyId! && session.role !== 'SUPERADMIN')) {
     const { notFound } = await import('next/navigation');
     notFound();
   }
 
   // Dedupe logs by recipientEmail, keeping the most recent attempt per email
   // (one email may have multiple logs if resend-failed was called)
-  const latestPerRecipient = new Map<string, typeof batch.emailLogs[0]>();
-  for (const log of batch.emailLogs) {
+  const latestPerRecipient = new Map<string, typeof batch!.emailLogs[0]>();
+  for (const log of batch!.emailLogs) {
     const existing = latestPerRecipient.get(log.recipientEmail);
     if (!existing || log.createdAt > existing.createdAt) {
       latestPerRecipient.set(log.recipientEmail, log);
@@ -60,14 +60,14 @@ export default async function DistributionDetailPage({ params }: Props) {
 
   return (
     <Shell
-      companyName={batch.company.name}
+      companyName={batch!.company.name}
       userEmail={session.email}
       isSuperAdmin={session.role === 'SUPERADMIN'}
     >
       <PageHeader
         eyebrow="Distribution"
-        title={batch.fileName ?? 'Untitled batch'}
-        description={`Created ${batch.createdAt.toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: '2-digit' })} · ${batch.status.toLowerCase()}`}
+        title={batch!.fileName ?? 'Untitled batch'}
+        description={`Created ${batch!.createdAt.toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: '2-digit' })} · ${batch!.status.toLowerCase()}`}
         actions={
           <Link href="/distribution" className="text-xs text-ink-faint hover:text-ink transition">
             ← All batches
@@ -76,8 +76,8 @@ export default async function DistributionDetailPage({ params }: Props) {
       />
 
       <div className="grid grid-cols-4 gap-3.5 mb-6">
-        <Stat label="Recipients" value={batch.totalRecipients} />
-        <Stat label="Sent" value={currentSent} hint={`of ${batch.totalRecipients}`} />
+        <Stat label="Recipients" value={batch!.totalRecipients} />
+        <Stat label="Sent" value={currentSent} hint={`of ${batch!.totalRecipients}`} />
         <Stat label="Failed" value={currentFailed} hint={currentFailed > 0 && canManage ? 'retriable' : undefined} />
         <Stat label="Pending" value={currentPending} />
       </div>
