@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -22,27 +23,15 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 interface ProviderProps {
   initialTheme: Theme;
-  /** When true, the user is signed in and we should persist changes to DB */
-  authenticated?: boolean;
   children: ReactNode;
 }
 
-/**
- * ThemeProvider — manages dark/light theme.
- *
- * Hydration:
- * 1. Server renders with `data-theme` attribute set on <html> via cookie (see app/layout.tsx).
- * 2. Client mounts and reads same value from DB-loaded session. No flash.
- *
- * Persistence:
- * - Cookie `perenne_theme` (1 year) — read by middleware/layout for SSR.
- * - DB User.themePreference — synced via PATCH /api/user/me on change.
- */
-export function ThemeProvider({ initialTheme, authenticated, children }: ProviderProps) {
+export function ThemeProvider({ initialTheme, children }: ProviderProps) {
   const [theme, setThemeState] = useState<Theme>(initialTheme);
   const [isReady, setIsReady] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const dbSyncDone = useRef(false);
 
-  // Apply theme to <html data-theme="..."> on mount and on change
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute('data-theme', theme);
@@ -50,23 +39,48 @@ export function ThemeProvider({ initialTheme, authenticated, children }: Provide
     setIsReady(true);
   }, [theme]);
 
+  useEffect(() => {
+    if (dbSyncDone.current) return;
+    dbSyncDone.current = true;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/user/me', { method: 'GET' });
+        if (cancelled) return;
+        if (!res.ok) {
+          setIsAuthenticated(false);
+          return;
+        }
+        const data = await res.json();
+        const dbTheme = data?.user?.themePreference as Theme | undefined;
+        setIsAuthenticated(true);
+        if ((dbTheme === 'dark' || dbTheme === 'light') && dbTheme !== theme) {
+          setThemeState(dbTheme);
+          document.cookie = `perenne_theme=${dbTheme}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
+        }
+      } catch {
+        if (!cancelled) setIsAuthenticated(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const setTheme = useCallback(
     (next: Theme) => {
       setThemeState(next);
-      // Cookie for SSR consistency on next request
       document.cookie = `perenne_theme=${next}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
-      // Persist to DB if authenticated
-      if (authenticated) {
+      if (isAuthenticated) {
         fetch('/api/user/me', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ themePreference: next }),
-        }).catch(() => {
-          /* non-fatal — cookie is the source of truth client-side */
-        });
+        }).catch(() => {});
       }
     },
-    [authenticated]
+    [isAuthenticated]
   );
 
   const toggleTheme = useCallback(() => {
@@ -82,8 +96,6 @@ export function ThemeProvider({ initialTheme, authenticated, children }: Provide
 
 export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);
-  if (!ctx) {
-    throw new Error('useTheme must be used within a ThemeProvider');
-  }
+  if (!ctx) throw new Error('useTheme must be used within a ThemeProvider');
   return ctx;
 }
