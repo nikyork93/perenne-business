@@ -1,183 +1,187 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
+import { NextResponse } from 'next/server';
+import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
-import { env } from '@/lib/env';
-import { hmacSign } from '@/lib/crypto';
+import type { CoverAssetRef } from '@/types/cover';
 
-export const runtime = 'nodejs';
-
-const assetSchema = z.object({
-  name: z.string().max(200),
-  url: z.string().url().optional(),
-  dataUrl: z.string().optional(),
-  x: z.number().min(-1).max(2),
-  y: z.number().min(-1).max(2),
-  scale: z.number().min(0.01).max(10),
-  rotation: z.number().min(-360).max(360),
-  opacity: z.number().min(0).max(1),
-});
-
-const bodySchema = z.object({
-  version: z.number().int().min(1),
-  canvas: z.object({ width: z.number().int(), height: z.number().int() }),
-  cover: z.object({
-    backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-    assets: z.array(assetSchema).max(20),
-    quote: z
-      .object({
-        text: z.string().max(500),
-        position: z.enum(['top', 'center', 'bottom']),
-        color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-      })
-      .optional(),
-  }),
-});
-
-export async function POST(req: NextRequest) {
-  const session = await getSession();
-  if (!session || !session.companyId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+/**
+ * POST /api/cover
+ *
+ * Saves a new active version of CoverConfig for the current user's company.
+ * Marks all previous versions inactive.
+ *
+ * Body shape — TWO scopes supported:
+ *
+ *   { scope: 'cover', cover: {...}, canvas?: {...}, version?: number }
+ *     → updates cover fields, preserves existing pageWatermarks
+ *
+ *   { scope: 'pageWatermarks', pageWatermarks: [...] }
+ *     → updates watermarks, preserves existing cover
+ *
+ * For backward compatibility, body without `scope` is treated as { scope: 'cover' }
+ * and reads cover from `body.cover`.
+ *
+ * Response: { config: { version }, warnings?: string[] }
+ */
+export async function POST(req: Request) {
+  const session = await requireSession();
+  if (!session.companyId) {
+    return NextResponse.json({ error: 'No company associated with session.' }, { status: 400 });
   }
-
-  // OWNER, ADMIN, or SUPERADMIN can save cover configs
-  if (!['OWNER', 'ADMIN', 'SUPERADMIN'].includes(session.role)) {
-    return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
+  if (session.role === 'VIEWER') {
+    return NextResponse.json({ error: 'Insufficient permissions.' }, { status: 403 });
   }
+  const companyId = session.companyId;
 
-  let parsed;
+  let body: {
+    scope?: 'cover' | 'pageWatermarks';
+    cover?: {
+      backgroundColor: string;
+      backgroundImageUrl?: string;
+      assets: CoverAssetRef[];
+      quote?: { text: string; position: string; color: string };
+    };
+    pageWatermarks?: CoverAssetRef[];
+  };
   try {
-    const body = await req.json();
-    const result = bodySchema.safeParse(body);
-    if (!result.success) {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
+  }
+
+  const scope = body.scope ?? 'cover';
+  if (scope !== 'cover' && scope !== 'pageWatermarks') {
+    return NextResponse.json(
+      { error: 'scope must be "cover" or "pageWatermarks".' },
+      { status: 400 }
+    );
+  }
+
+  // Validate per scope
+  if (scope === 'cover') {
+    if (!body.cover?.backgroundColor) {
+      return NextResponse.json({ error: 'Missing cover.backgroundColor.' }, { status: 400 });
+    }
+    if (!Array.isArray(body.cover.assets)) {
+      return NextResponse.json({ error: 'Missing or invalid cover.assets.' }, { status: 400 });
+    }
+  }
+  if (scope === 'pageWatermarks') {
+    if (!Array.isArray(body.pageWatermarks)) {
       return NextResponse.json(
-        { error: 'Invalid cover config', details: result.error.flatten() },
+        { error: 'pageWatermarks must be an array.' },
         { status: 400 }
       );
     }
-    parsed = result.data;
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  // Strip dataUrl from assets before persisting — only URLs go to DB.
-  // Assets with only dataUrl (not uploaded yet) will be skipped with a warning.
-  const cleanAssets = parsed.cover.assets
-    .filter((a) => a.url) // must have persistent URL
-    .map(({ dataUrl: _dataUrl, ...rest }) => rest);
-
-  const skipped = parsed.cover.assets.length - cleanAssets.length;
-
-  const companyId = session.companyId;
-
-  const savedConfig = await prisma.$transaction(async (tx) => {
-    // Find current version number
-    const latest = await tx.coverConfig.findFirst({
-      where: { companyId },
-      orderBy: { version: 'desc' },
-      select: { version: true },
-    });
-    const nextVersion = (latest?.version ?? 0) + 1;
-
-    // Deactivate all previous configs
-    await tx.coverConfig.updateMany({
-      where: { companyId, isActive: true },
-      data: { isActive: false },
-    });
-
-    // Create new active version
-    const created = await tx.coverConfig.create({
-      data: {
-        companyId,
-        version: nextVersion,
-        isActive: true,
-        backgroundColor: parsed.cover.backgroundColor,
-        assetsJson: cleanAssets,
-        quoteText: parsed.cover.quote?.text ?? null,
-        quotePosition: parsed.cover.quote?.position ?? 'bottom',
-        quoteColor: parsed.cover.quote?.color ?? '#ffffff',
-      },
-    });
-
-    await tx.auditLog.create({
-      data: {
-        companyId,
-        actorEmail: session.email,
-        actorRole: session.role,
-        action: 'cover.saved',
-        targetType: 'CoverConfig',
-        targetId: created.id,
-        metadata: { version: nextVersion, assets: cleanAssets.length },
-      },
-    });
-
-    return created;
+  // ── Load current active config to preserve unchanged scope ──
+  const current = await prisma.coverConfig.findFirst({
+    where: { companyId, isActive: true },
+    orderBy: { version: 'desc' },
   });
 
-  // Fire-and-forget: sync Company config to Worker KV for iOS
-  syncCompanyToWorker(companyId).catch((e) =>
-    console.error('Worker sync failed (non-blocking):', e)
-  );
+  const currentExtra = current as unknown as {
+    backgroundImageUrl?: string | null;
+    pageWatermarksJson?: unknown;
+  } | null;
+
+  // ── Build merged data based on scope ──
+  const warnings: string[] = [];
+
+  let backgroundColor: string;
+  let backgroundImageUrl: string | null;
+  let assetsJson: object;
+  let quoteText: string | null;
+  let quotePosition: string | null;
+  let quoteColor: string | null;
+  let pageWatermarksJson: object | null;
+
+  if (scope === 'cover' && body.cover) {
+    backgroundColor = body.cover.backgroundColor;
+    backgroundImageUrl = body.cover.backgroundImageUrl ?? null;
+    assetsJson = body.cover.assets as unknown as object;
+    quoteText = body.cover.quote?.text ?? null;
+    quotePosition = body.cover.quote?.position ?? null;
+    quoteColor = body.cover.quote?.color ?? null;
+    // Preserve watermarks from current
+    pageWatermarksJson = (currentExtra?.pageWatermarksJson as object | null) ?? null;
+
+    // Warnings
+    const missingUrls = body.cover.assets.filter((a) => !a.url);
+    if (missingUrls.length > 0) {
+      warnings.push(
+        `${missingUrls.length} asset(s) without persistent URL — re-upload before iOS sync.`
+      );
+    }
+    if (
+      body.cover.backgroundImageUrl &&
+      !body.cover.backgroundImageUrl.startsWith('http')
+    ) {
+      warnings.push('Background image is not yet uploaded — re-save once upload completes.');
+    }
+  } else {
+    // scope === 'pageWatermarks': preserve cover from current, update watermarks
+    if (!current) {
+      return NextResponse.json(
+        { error: 'No existing cover config — save the cover first.' },
+        { status: 400 }
+      );
+    }
+    backgroundColor = current.backgroundColor;
+    backgroundImageUrl = currentExtra?.backgroundImageUrl ?? null;
+    assetsJson = (current.assetsJson as unknown as object) ?? [];
+    quoteText = current.quoteText;
+    quotePosition = current.quotePosition;
+    quoteColor = current.quoteColor;
+    pageWatermarksJson = (body.pageWatermarks ?? []) as unknown as object;
+
+    const missingUrls = (body.pageWatermarks ?? []).filter((w) => !w.url);
+    if (missingUrls.length > 0) {
+      warnings.push(
+        `${missingUrls.length} watermark(s) without persistent URL — re-upload before iOS sync.`
+      );
+    }
+  }
+
+  // ── Compute next version, deactivate old, create new ──
+  const latest = await prisma.coverConfig.findFirst({
+    where: { companyId },
+    orderBy: { version: 'desc' },
+    select: { version: true },
+  });
+  const nextVersion = (latest?.version ?? 0) + 1;
+
+  await prisma.coverConfig.updateMany({
+    where: { companyId, isActive: true },
+    data: { isActive: false },
+  });
+
+  const created = await prisma.coverConfig.create({
+    data: {
+      companyId,
+      version: nextVersion,
+      backgroundColor,
+      backgroundImageUrl,
+      assetsJson,
+      quoteText,
+      quotePosition,
+      quoteColor,
+      pageWatermarksJson,
+      isActive: true,
+    } as unknown as Parameters<typeof prisma.coverConfig.create>[0]['data'],
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      companyId,
+      actorEmail: session.email,
+      action: scope === 'pageWatermarks' ? 'cover.watermarks_saved' : 'cover.saved',
+      details: { version: nextVersion, scope } as unknown as object,
+    },
+  });
 
   return NextResponse.json({
-    ok: true,
-    config: savedConfig,
-    warnings: skipped > 0
-      ? [`${skipped} asset(s) skipped — pending upload to R2.`]
-      : undefined,
-  });
-}
-
-// ─── Worker KV sync helper ────────────────────────────────────
-
-async function syncCompanyToWorker(companyId: string) {
-  if (!env.PERENNE_API_SECRET) return;
-
-  const company = await prisma.company.findUnique({
-    where: { id: companyId },
-    include: {
-      coverConfigs: {
-        where: { isActive: true },
-        take: 1,
-        orderBy: { version: 'desc' },
-      },
-    },
-  });
-  if (!company) return;
-
-  const cover = company.coverConfigs[0];
-  const payload = {
-    companyId,
-    company: {
-      name: company.name,
-      logoSymbolUrl: company.logoSymbolUrl,
-      logoExtendedUrl: company.logoExtendedUrl,
-      cover: cover
-        ? {
-            backgroundColor: cover.backgroundColor,
-            assets: cover.assetsJson,
-            quote: cover.quoteText
-              ? {
-                  text: cover.quoteText,
-                  position: cover.quotePosition,
-                  color: cover.quoteColor,
-                }
-              : null,
-          }
-        : null,
-    },
-  };
-
-  const timestamp = String(Date.now());
-  const signature = hmacSign(`${timestamp}:${companyId}`, env.PERENNE_API_SECRET);
-
-  await fetch(`${env.PERENNE_API_URL}/companies/sync`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-perenne-signature': signature,
-      'x-perenne-timestamp': timestamp,
-    },
-    body: JSON.stringify(payload),
+    config: { version: created.version },
+    warnings: warnings.length > 0 ? warnings : undefined,
   });
 }

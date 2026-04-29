@@ -140,7 +140,6 @@ model User {
   @@index([companyId])
   @@index([inviteToken])
   @@index([resetPasswordToken])
-  themePreference     String   @default("dark")  // "dark" | "light"
 }
 
 model Session {
@@ -218,8 +217,6 @@ model CoverConfig {
 
   @@index([companyId])
   @@index([companyId, isActive])
-  backgroundImageUrl  String?
-  pageWatermarksJson  Json?
 }
 
 model CoverAsset {

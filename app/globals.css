@@ -2,120 +2,251 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Base ──────────────────────────────────────────────── */
-:root {
-  color-scheme: dark;
+/* ════════════════════════════════════════════════════════════════════
+   PERENNE BUSINESS — DESIGN TOKENS
+   Dark theme (default) + Light theme via [data-theme="light"]
+   ════════════════════════════════════════════════════════════════════ */
+
+:root,
+:root[data-theme='dark'] {
+  /* Surfaces */
+  --bg-base:           #0a0a0f;
+  --bg-deep:           #08080e;
+  --bg-mid:            #0b0b12;
+
+  --glass-bg:          rgba(255, 255, 255, 0.055);
+  --glass-bg-hi:       rgba(255, 255, 255, 0.085);
+  --glass-border:      rgba(255, 255, 255, 0.09);
+  --glass-hairline:    rgba(255, 255, 255, 0.18);
+
+  --surface-faint:     rgba(255, 255, 255, 0.03);
+  --surface-hover:     rgba(255, 255, 255, 0.07);
+  --border-subtle:     rgba(255, 255, 255, 0.05);
+
+  --sidebar-bg:        rgba(15, 15, 21, 0.55);
+  --sidebar-border:    rgba(255, 255, 255, 0.08);
+
+  /* Text */
+  --text:              rgba(244, 244, 245, 0.96);
+  --text-dim:          rgba(193, 193, 200, 0.85);
+  --text-faint:        rgba(113, 113, 122, 0.85);
+
+  /* Accents */
+  --accent:            #4a7a8c;
+  --accent-glow:       rgba(74, 122, 140, 0.35);
+  --accent-soft:       rgba(74, 122, 140, 0.12);
+  --aura-opacity:      0.30;
+
+  /* Status */
+  --danger:            #ff6b6b;
+  --danger-soft:       rgba(255, 107, 107, 0.10);
+  --success:           #4ade80;
+
+  /* Shadows */
+  --shadow-card:       0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme='light'] {
+  /* Surfaces — light bg confirmed by user: #e5e7eb */
+  --bg-base:           #e5e7eb;
+  --bg-deep:           #d4d7de;
+  --bg-mid:            #ecedf1;
+
+  --glass-bg:          rgba(255, 255, 255, 0.65);
+  --glass-bg-hi:       rgba(255, 255, 255, 0.85);
+  --glass-border:      rgba(24, 24, 27, 0.08);
+  --glass-hairline:    rgba(24, 24, 27, 0.18);
+
+  --surface-faint:     rgba(24, 24, 27, 0.04);
+  --surface-hover:     rgba(24, 24, 27, 0.07);
+  --border-subtle:     rgba(24, 24, 27, 0.06);
+
+  --sidebar-bg:        rgba(255, 255, 255, 0.75);
+  --sidebar-border:    rgba(24, 24, 27, 0.08);
+
+  /* Text */
+  --text:              #18181b;
+  --text-dim:          #52525b;
+  --text-faint:        #a1a1aa;
+
+  /* Accents (same teal in light mode for brand consistency) */
+  --accent:            #4a7a8c;
+  --accent-glow:       rgba(74, 122, 140, 0.25);
+  --accent-soft:       rgba(74, 122, 140, 0.08);
+  --aura-opacity:      0.10; /* less prominent on light bg */
+
+  /* Status */
+  --danger:            #dc2626;
+  --danger-soft:       rgba(220, 38, 38, 0.08);
+  --success:           #16a34a;
+
+  /* Shadows */
+  --shadow-card:       0 16px 40px rgba(24, 24, 27, 0.10);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   BASE
+   ────────────────────────────────────────────────────────────────────── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 html, body {
-  overflow-x: hidden;
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
-/* ─── Atmosphere: ambient gradient mesh behind everything ── */
-.atmosphere {
+/* Smooth theme transition on key surfaces, but disable on first paint */
+html.theme-transition * {
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease,
+    box-shadow 0.25s ease !important;
+}
+
+/* Atmospheric teal aura — opacity scales with theme */
+body::before {
+  content: '';
   position: fixed;
   inset: 0;
-  z-index: -2;
   background:
-    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(139, 92, 246, 0.22), transparent 60%),
-    radial-gradient(ellipse 70% 50% at 85% 80%, rgba(212, 165, 116, 0.18), transparent 60%),
-    radial-gradient(ellipse 60% 70% at 50% 50%, rgba(59, 130, 246, 0.10), transparent 70%),
-    linear-gradient(180deg, #0b0b12 0%, #08080e 100%);
+    radial-gradient(ellipse 80% 60% at 20% 10%, var(--accent-glow), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 85% 80%, var(--accent-glow), transparent 60%),
+    radial-gradient(ellipse 60% 70% at 50% 50%, rgba(59, 130, 246, 0.08), transparent 70%);
+  opacity: var(--aura-opacity);
+  z-index: -2;
   pointer-events: none;
 }
 
-/* Grain overlay: subtle texture to avoid flat-plastic look */
-.grain {
+body::after {
+  content: '';
   position: fixed;
   inset: 0;
-  z-index: -1;
-  opacity: 0.4;
-  mix-blend-mode: overlay;
-  pointer-events: none;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.15 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.25;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  z-index: -1;
 }
 
-/* ─── Liquid Glass panel utility ───────────────────────── */
-@layer components {
-  .glass {
-    @apply bg-glass-bg border border-glass-border rounded-2xl;
-    backdrop-filter: blur(40px) saturate(180%);
-    -webkit-backdrop-filter: blur(40px) saturate(180%);
-    position: relative;
-  }
-
-  .glass::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    padding: 1px;
-    background: linear-gradient(145deg,
-      rgba(255,255,255,0.18),
-      transparent 40%,
-      transparent 60%,
-      rgba(255,255,255,0.04));
-    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    mask-composite: exclude;
-    -webkit-mask-composite: xor;
-    pointer-events: none;
-  }
-
-  .glass-topbar::after {
-    content: '';
-    position: absolute;
-    inset: 0 0 auto 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
-  }
-
-  /* Section label: small, wide-tracked, uppercase */
-  .label {
-    @apply text-[10px] font-semibold tracking-[0.22em] uppercase text-ink-faint;
-  }
-
-  /* Scrollbar */
-  .glass::-webkit-scrollbar { width: 4px; }
-  .glass::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.1);
-    border-radius: 2px;
-  }
+:root[data-theme='light'] body::after {
+  opacity: 0.15;
+  mix-blend-mode: multiply;
 }
 
-/* ─── Buttons ──────────────────────────────────────────── */
-@layer components {
-  .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-[10px]
-           border border-glass-border bg-white/[0.06]
-           px-4 py-2.5 text-xs font-medium
-           text-ink transition-all duration-200
-           hover:bg-white/[0.11] hover:border-glass-hairline hover:-translate-y-px
-           active:translate-y-0 cursor-pointer;
-  }
-
-  .btn-primary {
-    @apply text-[#1a1309] font-semibold border-accent/40;
-    background: linear-gradient(135deg, #d4a574 0%, #b8885c 100%);
-  }
-
-  .btn-primary:hover {
-    background: linear-gradient(135deg, #e0b284 0%, #c89563 100%);
-    box-shadow: 0 8px 32px rgba(212,165,116,0.35);
-  }
-
-  .btn-danger {
-    @apply bg-danger/10 border-danger/30 text-[#ff9a9a]
-           hover:bg-danger/[0.18] hover:border-danger/50;
-  }
+/* ──────────────────────────────────────────────────────────────────────
+   GLASS PANEL utility class
+   ────────────────────────────────────────────────────────────────────── */
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  position: relative;
+  box-shadow: var(--shadow-card);
 }
 
-/* ─── Inputs ───────────────────────────────────────────── */
-@layer components {
-  .input {
-    @apply w-full bg-white/[0.04] border border-glass-border rounded-lg
-           px-3 py-2 text-xs font-mono text-ink
-           outline-none transition-colors
-           focus:border-accent/50;
-  }
+.glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  padding: 1px;
+  background: linear-gradient(145deg, var(--glass-hairline), transparent 40%, transparent 60%, var(--border-subtle));
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  pointer-events: none;
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+   TYPOGRAPHY
+   ────────────────────────────────────────────────────────────────────── */
+.font-display { font-family: var(--font-display), serif; }
+.font-mono    { font-family: var(--font-mono), monospace; }
+
+.label {
+  font-family: var(--font-sans), sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   BUTTONS — base utility (theme-aware)
+   ────────────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface-hover);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn:hover {
+  background: var(--glass-bg-hi);
+  border-color: var(--glass-hairline);
+  transform: translateY(-1px);
+}
+
+.btn:active { transform: translateY(0); }
+
+/* ──────────────────────────────────────────────────────────────────────
+   Range / Color inputs (used in editor)
+   ────────────────────────────────────────────────────────────────────── */
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 12px var(--accent-glow);
+  transition: transform 0.15s;
+}
+
+input[type='range']::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Scrollbar (subtle)
+   ────────────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--glass-hairline); }
+::-webkit-scrollbar-track { background: transparent; }

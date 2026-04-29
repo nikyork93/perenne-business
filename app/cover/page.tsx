@@ -3,7 +3,7 @@ import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Shell } from '@/components/layout/Shell';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { CoverEditorClient } from '@/components/editor/CoverEditorClient';
+import { EditorClient } from '@/components/editor/EditorClient';
 import type { CoverConfigData, CoverAssetRef } from '@/types/cover';
 import { DEFAULT_COVER_CONFIG } from '@/types/cover';
 
@@ -24,12 +24,19 @@ export default async function CoverPage() {
     }),
   ]);
 
+  // Defensive any-cast for new fields in case Prisma client wasn't regenerated yet
+  const extra = activeConfig as unknown as {
+    backgroundImageUrl?: string | null;
+    pageWatermarksJson?: unknown;
+  } | null;
+
   const initialConfig: CoverConfigData = activeConfig
     ? {
         version: activeConfig.version,
         canvas: DEFAULT_COVER_CONFIG.canvas,
         cover: {
           backgroundColor: activeConfig.backgroundColor,
+          backgroundImageUrl: extra?.backgroundImageUrl ?? undefined,
           assets: (activeConfig.assetsJson as unknown as CoverAssetRef[]) ?? [],
           quote: activeConfig.quoteText
             ? {
@@ -39,6 +46,7 @@ export default async function CoverPage() {
               }
             : undefined,
         },
+        pageWatermarks: (extra?.pageWatermarksJson as CoverAssetRef[] | null) ?? [],
       }
     : DEFAULT_COVER_CONFIG;
 
@@ -50,10 +58,10 @@ export default async function CoverPage() {
     >
       <PageHeader
         eyebrow={`Version ${activeConfig?.version ?? 0}`}
-        title="Cover Editor"
-        description="Design the cover of your company notebooks. Upload logos, position them, and save a version to apply to all future notebook codes."
+        title="Editor"
+        description="Design the cover and page watermarks of your company notebooks. Switch between tabs to edit each section."
       />
-      <CoverEditorClient initialConfig={initialConfig} />
+      <EditorClient initialConfig={initialConfig} />
     </Shell>
   );
 }

@@ -2,17 +2,14 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Script from 'next/script';
-import { Button, Slider, ColorPicker, Input, SectionLabel, Whisper } from '@/components/ui';
+import { Button, Slider, Input, SectionLabel, Whisper } from '@/components/ui';
 import {
   EDITOR_CANVAS_WIDTH,
   EDITOR_CANVAS_HEIGHT,
   EDITOR_CORNER_RADIUS,
-  DEFAULT_COVER_CONFIG,
-  type CoverConfigData,
   type CoverAssetRef,
 } from '@/types/cover';
 
-// Fabric.js loaded from CDN via <Script>; declare global type
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fabric: any;
@@ -34,7 +31,7 @@ interface FabricImageLike {
   perenneInverted?: boolean;
   filters?: unknown[];
   applyFilters?: () => void;
-  setControlsVisibility?: (visibility: Record<string, boolean>) => void;
+  setControlsVisibility?: (v: Record<string, boolean>) => void;
   set: (props: Record<string, unknown>) => void;
 }
 
@@ -47,39 +44,40 @@ interface AssetEntry {
   fabricObj: FabricImageLike;
 }
 
-interface CoverEditorProps {
-  initialConfig?: CoverConfigData;
-  onSave?: (config: CoverConfigData) => Promise<void> | void;
+interface PageEditorProps {
+  initialWatermarks: CoverAssetRef[];
+  onSave?: (watermarks: CoverAssetRef[]) => Promise<void> | void;
   onAssetUpload?: (file: File) => Promise<{ url: string } | null>;
-  onBackgroundUpload?: (file: File) => Promise<{ url: string } | null>;
+  /** Hint shown if a Fabric is already loaded — avoids double-load */
+  fabricAlreadyLoaded?: boolean;
 }
 
-export function CoverEditor({
-  initialConfig,
+/**
+ * PageEditor — design watermarks that appear on every page of the notebook
+ * EXCEPT the "Property of a thinking human" page (index 1).
+ *
+ * Canvas shows a single page preview (392 × 540, ratio 0.725, identical to
+ * the notebook's physical 725 × 1000 page). Backdrop uses an off-white
+ * paper preview so users can see how watermarks look on a real page.
+ */
+export function PageEditor({
+  initialWatermarks,
   onSave,
   onAssetUpload,
-  onBackgroundUpload,
-}: CoverEditorProps) {
+  fabricAlreadyLoaded,
+}: PageEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fabricCanvasRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const bgFileInputRef = useRef<HTMLInputElement>(null);
   const nextIdRef = useRef(1);
 
-  const [fabricReady, setFabricReady] = useState(false);
-  const [bgColor, setBgColor] = useState(
-    initialConfig?.cover.backgroundColor ?? DEFAULT_COVER_CONFIG.cover.backgroundColor
-  );
-  const [bgImageUrl, setBgImageUrl] = useState<string | undefined>(
-    initialConfig?.cover.backgroundImageUrl
-  );
+  const [fabricReady, setFabricReady] = useState(fabricAlreadyLoaded ?? false);
   const [assets, setAssets] = useState<AssetEntry[]>([]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [activeObj, setActiveObj] = useState<any | null>(null);
   const [selTick, setSelTick] = useState(0);
   const [saving, setSaving] = useState(false);
-  const [bgUploading, setBgUploading] = useState(false);
 
   // ─── Initialize Fabric canvas ──────────────────────────────────────
   useEffect(() => {
@@ -90,12 +88,13 @@ export function CoverEditor({
     if (!fabricLib) return;
 
     const canvas = new fabricLib.Canvas(canvasRef.current, {
-      backgroundColor: bgColor,
+      // Off-white paper-like background (lighter than real paper because
+      // watermarks need contrast for designing — actual paper is paperColor)
+      backgroundColor: '#fafaf7',
       preserveObjectStacking: true,
       selection: false,
     });
 
-    // Selection visuals — use teal accent now (was gold)
     fabricLib.Object.prototype.transparentCorners = false;
     fabricLib.Object.prototype.cornerColor = '#4a7a8c';
     fabricLib.Object.prototype.cornerStyle = 'circle';
@@ -106,7 +105,6 @@ export function CoverEditor({
     fabricLib.Object.prototype.rotatingPointOffset = 30;
     fabricLib.Object.prototype.borderDashArray = [4, 4];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const onSelect = () => {
       setActiveObj(canvas.getActiveObject());
       setSelTick((t) => t + 1);
@@ -121,14 +119,9 @@ export function CoverEditor({
 
     fabricCanvasRef.current = canvas;
 
-    // Restore initial bg image if present
-    if (initialConfig?.cover.backgroundImageUrl) {
-      loadBackgroundImage(initialConfig.cover.backgroundImageUrl);
-    }
-
-    // Restore initial assets from DB config
-    if (initialConfig?.cover.assets?.length) {
-      initialConfig.cover.assets.forEach((a) => {
+    // Restore initial watermarks
+    if (initialWatermarks?.length) {
+      initialWatermarks.forEach((a) => {
         if (a.url || a.dataUrl) {
           loadAssetFromUrl(a.url ?? a.dataUrl ?? '', a.name, a);
         }
@@ -142,79 +135,7 @@ export function CoverEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fabricReady]);
 
-  // ─── Sync bgColor → fabric ─────────────────────────────────────────
-  useEffect(() => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-    canvas.backgroundColor = bgColor;
-    canvas.renderAll();
-  }, [bgColor]);
-
-  // ─── Background image loader ───────────────────────────────────────
-  const loadBackgroundImage = useCallback((url: string) => {
-    const canvas = fabricCanvasRef.current;
-    const fabricLib = window.fabric;
-    if (!canvas || !fabricLib) return;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    fabricLib.Image.fromURL(
-      url,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (img: any) => {
-        // Cover the canvas while preserving aspect ratio
-        const scaleX = EDITOR_CANVAS_WIDTH / (img.width ?? 1);
-        const scaleY = EDITOR_CANVAS_HEIGHT / (img.height ?? 1);
-        const scale = Math.max(scaleX, scaleY);
-        canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
-          scaleX: scale,
-          scaleY: scale,
-          originX: 'left',
-          originY: 'top',
-        });
-      },
-      { crossOrigin: 'anonymous' }
-    );
-  }, []);
-
-  // ─── Background image upload handler ───────────────────────────────
-  async function handleBgFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-
-    setBgUploading(true);
-    try {
-      // Immediate preview via data URL
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      setBgImageUrl(dataUrl);
-      loadBackgroundImage(dataUrl);
-
-      // Persistent upload to R2
-      if (onBackgroundUpload) {
-        const result = await onBackgroundUpload(file);
-        if (result?.url) {
-          setBgImageUrl(result.url);
-          loadBackgroundImage(result.url);
-        }
-      }
-    } finally {
-      setBgUploading(false);
-    }
-  }
-
-  function clearBackgroundImage() {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-    canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
-    setBgImageUrl(undefined);
-  }
-
-  // ─── Logo asset loader ─────────────────────────────────────────────
+  // ─── Asset loader ──────────────────────────────────────────────────
   const loadAssetFromUrl = useCallback(
     (url: string, name: string, restore?: CoverAssetRef) => {
       const canvas = fabricCanvasRef.current;
@@ -241,13 +162,13 @@ export function CoverEditor({
               scaleY: restore.scale,
               angle: restore.rotation,
               opacity: restore.opacity,
-              // ⭐ Lock proportions — block ALL non-uniform scaling
               lockUniScaling: true,
               lockScalingFlip: true,
             });
           } else {
+            // Watermarks default to smaller scale (~25% of canvas) and lower opacity
             const maxEdge = Math.max(img.width ?? 100, img.height ?? 100);
-            const scale = (EDITOR_CANVAS_WIDTH * 0.4) / maxEdge;
+            const scale = (EDITOR_CANVAS_WIDTH * 0.25) / maxEdge;
             img.set({
               left: EDITOR_CANVAS_WIDTH / 2,
               top: EDITOR_CANVAS_HEIGHT / 2,
@@ -255,25 +176,17 @@ export function CoverEditor({
               originY: 'center',
               scaleX: scale,
               scaleY: scale,
+              opacity: 0.3, // watermark default opacity
               lockUniScaling: true,
               lockScalingFlip: true,
             });
           }
 
-          // ⭐ Disable middle handles — prevent stretching, allow only corner uniform scale
           img.setControlsVisibility({
-            mt: false, // middle top
-            mb: false, // middle bottom
-            ml: false, // middle left
-            mr: false, // middle right
-            mtr: true, // top rotate
-            tl: true,
-            tr: true,
-            bl: true,
-            br: true,
+            mt: false, mb: false, ml: false, mr: false,
+            mtr: true, tl: true, tr: true, bl: true, br: true,
           });
 
-          // Apply invert filter on restore if needed
           if (restore?.invert) {
             img.filters = [new fabricLib.Image.filters.Invert()];
             img.applyFilters();
@@ -301,7 +214,7 @@ export function CoverEditor({
     []
   );
 
-  // ─── Logo upload handler ───────────────────────────────────────────
+  // ─── Upload ────────────────────────────────────────────────────────
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     files.forEach(async (file) => {
@@ -346,7 +259,6 @@ export function CoverEditor({
     });
   }
 
-  // ⭐ Toggle invert filter on the active logo
   function toggleInvert() {
     const canvas = fabricCanvasRef.current;
     const fabricLib = window.fabric;
@@ -363,7 +275,6 @@ export function CoverEditor({
     activeObj.applyFilters();
     canvas.renderAll();
 
-    // Sync to assets array
     setAssets((prev) =>
       prev.map((a) =>
         a.id === activeObj.perenneAssetId ? { ...a, inverted: isInverted } : a
@@ -372,7 +283,6 @@ export function CoverEditor({
     setSelTick((t) => t + 1);
   }
 
-  // ─── Property editors ──────────────────────────────────────────────
   function updateActive(patch: Record<string, number>) {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !activeObj) return;
@@ -381,22 +291,29 @@ export function CoverEditor({
     setSelTick((t) => t + 1);
   }
 
-  // ─── Templates ─────────────────────────────────────────────────────
-  function applyTemplate(name: 'minimal' | 'corporate' | 'bold') {
+  // ─── Templates (corner positions for watermarks) ───────────────────
+  function applyPosition(name: 'tl' | 'tr' | 'bl' | 'br' | 'center') {
     if (assets.length === 0) {
-      alert('Upload at least one logo first.');
+      alert('Upload at least one watermark first.');
       return;
     }
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    const primary = assets[0].fabricObj;
-    const setup: Record<string, Record<string, number>> = {
-      minimal: { left: EDITOR_CANVAS_WIDTH / 2, top: EDITOR_CANVAS_HEIGHT / 2, scaleX: 0.35, scaleY: 0.35, angle: 0, opacity: 1 },
-      corporate: { left: EDITOR_CANVAS_WIDTH * 0.25, top: EDITOR_CANVAS_HEIGHT * 0.18, scaleX: 0.30, scaleY: 0.30, angle: 0, opacity: 1 },
-      bold: { left: EDITOR_CANVAS_WIDTH / 2, top: EDITOR_CANVAS_HEIGHT / 2, scaleX: 0.75, scaleY: 0.75, angle: 0, opacity: 1 },
+    const target = activeObj ?? assets[0].fabricObj;
+    const margin = 0.12;
+    const positions: Record<string, { x: number; y: number }> = {
+      tl: { x: margin, y: margin },
+      tr: { x: 1 - margin, y: margin },
+      bl: { x: margin, y: 1 - margin },
+      br: { x: 1 - margin, y: 1 - margin },
+      center: { x: 0.5, y: 0.5 },
     };
-    primary.set(setup[name]);
-    canvas.setActiveObject(primary);
+    const p = positions[name];
+    target.set({
+      left: p.x * EDITOR_CANVAS_WIDTH,
+      top: p.y * EDITOR_CANVAS_HEIGHT,
+    });
+    canvas.setActiveObject(target);
     canvas.renderAll();
     setSelTick((t) => t + 1);
   }
@@ -406,7 +323,6 @@ export function CoverEditor({
     function handleKey(e: KeyboardEvent) {
       if (!activeObj) return;
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
-
       const step = e.shiftKey ? 10 : 1;
       if (e.key === 'ArrowLeft') { updateActive({ left: activeObj.left - step }); e.preventDefault(); }
       if (e.key === 'ArrowRight') { updateActive({ left: activeObj.left + step }); e.preventDefault(); }
@@ -421,58 +337,38 @@ export function CoverEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeObj]);
 
-  // ─── Serialize to config ───────────────────────────────────────────
-  function buildConfig(): CoverConfigData {
-    return {
-      version: 1,
-      canvas: { width: EDITOR_CANVAS_WIDTH, height: EDITOR_CANVAS_HEIGHT },
-      cover: {
-        backgroundColor: bgColor,
-        backgroundImageUrl: bgImageUrl?.startsWith('http') ? bgImageUrl : undefined,
-        assets: assets.map((a) => ({
-          name: a.name,
-          url: a.url,
-          x: +(a.fabricObj.left / EDITOR_CANVAS_WIDTH).toFixed(4),
-          y: +(a.fabricObj.top / EDITOR_CANVAS_HEIGHT).toFixed(4),
-          scale: +a.fabricObj.scaleX.toFixed(4),
-          rotation: +(a.fabricObj.angle || 0).toFixed(2),
-          opacity: +(a.fabricObj.opacity ?? 1).toFixed(2),
-          invert: a.inverted || undefined,
-        })),
-      },
-    };
+  // ─── Save ──────────────────────────────────────────────────────────
+  function buildWatermarks(): CoverAssetRef[] {
+    return assets.map((a) => ({
+      name: a.name,
+      url: a.url,
+      x: +(a.fabricObj.left / EDITOR_CANVAS_WIDTH).toFixed(4),
+      y: +(a.fabricObj.top / EDITOR_CANVAS_HEIGHT).toFixed(4),
+      scale: +a.fabricObj.scaleX.toFixed(4),
+      rotation: +(a.fabricObj.angle || 0).toFixed(2),
+      opacity: +(a.fabricObj.opacity ?? 1).toFixed(2),
+      invert: a.inverted || undefined,
+    }));
   }
 
   async function handleSave() {
     if (!onSave) return;
     setSaving(true);
     try {
-      await onSave(buildConfig());
+      await onSave(buildWatermarks());
     } finally {
       setSaving(false);
     }
   }
 
-  function handleExport() {
-    const str = JSON.stringify(buildConfig(), null, 2);
-    const blob = new Blob([str], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'cover-config.json';
-    a.click();
-  }
-
   function handleReset() {
-    if (!confirm('Remove all assets and reset cover?')) return;
+    if (!confirm('Remove all watermarks?')) return;
     const canvas = fabricCanvasRef.current;
     if (canvas) {
       assets.forEach((a) => canvas.remove(a.fabricObj));
-      canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
       canvas.renderAll();
     }
     setAssets([]);
-    setBgImageUrl(undefined);
-    setBgColor('#1a1a1a');
   }
 
   // ─── Display values ────────────────────────────────────────────────
@@ -494,20 +390,22 @@ export function CoverEditor({
 
   return (
     <>
-      <Script
-        src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"
-        strategy="afterInteractive"
-        onLoad={() => setFabricReady(true)}
-      />
+      {!fabricAlreadyLoaded && (
+        <Script
+          src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"
+          strategy="afterInteractive"
+          onLoad={() => setFabricReady(true)}
+        />
+      )}
 
       <div className="grid grid-cols-[260px_1fr_300px] gap-3.5 h-[calc(100vh-200px)]">
-        {/* ── LEFT PANEL ────────────────────────────────────────── */}
+        {/* ── LEFT PANEL: Watermarks list ────────────────────── */}
         <aside className="glass p-5 flex flex-col gap-6 overflow-y-auto">
           <div>
-            <SectionLabel>Logos & Assets</SectionLabel>
+            <SectionLabel>Page watermarks</SectionLabel>
             <Button variant="upload" onClick={() => fileInputRef.current?.click()}>
               <span className="text-base leading-none">+</span>
-              <span>Upload logo or image</span>
+              <span>Upload watermark</span>
             </Button>
             <input
               ref={fileInputRef}
@@ -518,9 +416,15 @@ export function CoverEditor({
               onChange={handleFileChange}
             />
 
+            <p className="mt-3 text-[10px] text-ink-faint leading-relaxed font-mono">
+              Watermarks appear on every page of the notebook except the
+              <span className="text-accent"> &ldquo;Property of&rdquo;</span> page.
+              Position is identical on each page.
+            </p>
+
             <div className="mt-3 flex flex-col gap-1.5">
               {assets.length === 0 && (
-                <Whisper className="py-4">No assets yet. Upload a logo to start.</Whisper>
+                <Whisper className="py-4">No watermarks yet.</Whisper>
               )}
               {assets.map((a) => {
                 const isActive = activeObj?.perenneAssetId === a.id;
@@ -561,35 +465,28 @@ export function CoverEditor({
           </div>
 
           <div>
-            <SectionLabel>Templates</SectionLabel>
-            <div className="flex flex-col gap-1.5">
-              {(['minimal', 'corporate', 'bold'] as const).map((name) => (
-                <button
-                  key={name}
-                  type="button"
-                  onClick={() => applyTemplate(name)}
-                  className="btn !justify-start !px-3"
-                >
-                  <span className="font-display italic capitalize">{name}</span>
-                  <span className="ml-auto text-[10px] text-ink-faint">
-                    {name === 'minimal' ? 'center' : name === 'corporate' ? 'top-left' : 'fill'}
-                  </span>
-                </button>
-              ))}
+            <SectionLabel>Quick position</SectionLabel>
+            <div className="grid grid-cols-3 gap-1.5">
+              <button type="button" onClick={() => applyPosition('tl')} className="btn !p-2 !text-[10px]" title="Top-left">↖</button>
+              <button type="button" onClick={() => applyPosition('center')} className="btn !p-2 !text-[10px]" title="Center">●</button>
+              <button type="button" onClick={() => applyPosition('tr')} className="btn !p-2 !text-[10px]" title="Top-right">↗</button>
+              <button type="button" onClick={() => applyPosition('bl')} className="btn !p-2 !text-[10px]" title="Bottom-left">↙</button>
+              <span />
+              <button type="button" onClick={() => applyPosition('br')} className="btn !p-2 !text-[10px]" title="Bottom-right">↘</button>
             </div>
           </div>
         </aside>
 
-        {/* ── CENTER: Canvas ────────────────────────────────────── */}
+        {/* ── CENTER: Single page preview ───────────────────── */}
         <main className="glass flex items-center justify-center relative overflow-hidden">
           <div
             className="overflow-hidden"
             style={{
               borderRadius: `${EDITOR_CORNER_RADIUS}px`,
               filter:
-                'drop-shadow(0 60px 120px rgba(0,0,0,0.5)) drop-shadow(0 20px 40px rgba(0,0,0,0.4))',
+                'drop-shadow(0 40px 80px rgba(0,0,0,0.35)) drop-shadow(0 12px 24px rgba(0,0,0,0.25))',
               boxShadow:
-                'inset 0 0 0 1px rgba(0,0,0,0.4), inset 2px 0 0 0 rgba(255,255,255,0.05), inset -1px 0 0 0 rgba(0,0,0,0.2)',
+                'inset 0 0 0 1px rgba(0,0,0,0.08)',
             }}
           >
             <canvas
@@ -599,72 +496,17 @@ export function CoverEditor({
             />
           </div>
           <div className="absolute bottom-5 left-1/2 -translate-x-1/2 font-mono text-[10px] tracking-[0.1em] text-ink-faint py-1.5 px-3.5 bg-black/30 backdrop-blur border border-glass-border rounded-full">
-            {EDITOR_CANVAS_WIDTH}×{EDITOR_CANVAS_HEIGHT} · ratio 0.725 · radius {EDITOR_CORNER_RADIUS}px
+            single page · 725×1000 ratio · applies to all pages except &ldquo;Property of&rdquo;
           </div>
         </main>
 
-        {/* ── RIGHT PANEL: Background + Selection ───────────────── */}
+        {/* ── RIGHT PANEL: Selection properties ─────────────── */}
         <aside className="glass p-5 flex flex-col gap-6 overflow-y-auto">
-          {/* Background section */}
-          <div>
-            <SectionLabel>Cover background</SectionLabel>
-
-            {/* Background image upload */}
-            <div className="mb-4">
-              {bgImageUrl ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2.5 p-2 rounded-lg border border-glass-border bg-surface-faint">
-                    <div className="w-10 h-10 rounded-md overflow-hidden shrink-0 bg-surface-faint">
-                      <img
-                        src={bgImageUrl}
-                        alt="background"
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <span className="flex-1 text-[11px] text-ink-dim">Pattern image</span>
-                    <button
-                      type="button"
-                      onClick={clearBackgroundImage}
-                      className="text-ink-faint hover:text-danger px-1.5 py-0.5 text-sm"
-                      aria-label="Remove background"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  variant="upload"
-                  onClick={() => bgFileInputRef.current?.click()}
-                  loading={bgUploading}
-                >
-                  <span className="text-base leading-none">+</span>
-                  <span>Upload pattern / image</span>
-                </Button>
-              )}
-              <input
-                ref={bgFileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleBgFileChange}
-              />
-            </div>
-
-            {/* Background color (always visible — used as fallback if no image) */}
-            <ColorPicker
-              label={bgImageUrl ? 'Fallback color' : 'Color'}
-              value={bgColor}
-              onChange={setBgColor}
-            />
-          </div>
-
-          {/* Selection section */}
           <div>
             <SectionLabel>Selection</SectionLabel>
             {!activeValues ? (
               <Whisper className="py-5">
-                Select an object on the canvas to edit its properties.
+                Select a watermark on the page to edit its properties.
               </Whisper>
             ) : (
               <div className="space-y-4">
@@ -698,8 +540,8 @@ export function CoverEditor({
                 <Slider
                   label="Scale"
                   displayValue={`${activeValues.scalePct}%`}
-                  min={10}
-                  max={300}
+                  min={5}
+                  max={200}
                   value={activeValues.scalePct}
                   onChange={(e) => {
                     const s = Number(e.target.value) / 100;
@@ -723,7 +565,6 @@ export function CoverEditor({
                   onChange={(e) => updateActive({ opacity: Number(e.target.value) / 100 })}
                 />
 
-                {/* ⭐ Invert color toggle */}
                 <button
                   type="button"
                   onClick={toggleInvert}
@@ -733,9 +574,7 @@ export function CoverEditor({
                       : ''
                   }`}
                 >
-                  <span>
-                    {activeValues.inverted ? '✓ Inverted' : 'Invert color'}
-                  </span>
+                  <span>{activeValues.inverted ? '✓ Inverted' : 'Invert color'}</span>
                   <span className="ml-2 text-[10px] text-ink-faint">B ↔ W</span>
                 </button>
 
@@ -746,7 +585,7 @@ export function CoverEditor({
                     if (activeObj?.perenneAssetId != null) removeAsset(activeObj.perenneAssetId);
                   }}
                 >
-                  Delete object
+                  Delete watermark
                 </Button>
               </div>
             )}
@@ -754,12 +593,11 @@ export function CoverEditor({
         </aside>
       </div>
 
-      {/* ── Bottom toolbar ───────────────────────────────────────── */}
+      {/* ── Bottom toolbar ─────────────────────────────────────── */}
       <div className="flex gap-3 mt-4 justify-end">
         <Button onClick={handleReset}>Reset</Button>
-        <Button onClick={handleExport}>Export JSON</Button>
         <Button variant="primary" onClick={handleSave} loading={saving} disabled={!onSave}>
-          Save Cover
+          Save Watermarks
         </Button>
       </div>
     </>

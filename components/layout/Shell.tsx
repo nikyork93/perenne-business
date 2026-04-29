@@ -1,258 +1,170 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { useState, type ReactNode } from 'react';
-import { PerenneLogo } from '@/components/layout/PerenneLogo';
+import { usePathname } from 'next/navigation';
+import { useState } from 'react';
+import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { PerenneLogo } from '@/components/PerenneLogo';
 
-const MAIN_NAV = [
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/cover', label: 'Cover' },
-  { href: '/codes', label: 'Codes' },
+interface ShellProps {
+  children: React.ReactNode;
+  companyName?: string;
+  userEmail?: string;
+  isSuperAdmin?: boolean;
+}
+
+interface NavItem {
+  href: string;
+  label: string;
+}
+
+const MAIN_NAV: NavItem[] = [
+  { href: '/dashboard',    label: 'Dashboard' },
+  { href: '/cover',        label: 'Cover' },
+  { href: '/codes',        label: 'Codes' },
   { href: '/distribution', label: 'Distribution' },
-  { href: '/store', label: 'Store' },
-  { href: '/billing', label: 'Billing' },
+  { href: '/store',        label: 'Store' },
+  { href: '/billing',      label: 'Billing' },
 ];
 
-const SETTINGS_NAV = [
-  { href: '/team', label: 'Team' },
+const ADMIN_NAV: NavItem[] = [
+  { href: '/admin/companies', label: 'Companies' },
+  { href: '/admin/users',     label: 'Users' },
+  { href: '/admin/revenue',   label: 'Revenue' },
+  { href: '/admin/audit',     label: 'Audit log' },
+];
+
+const SETTINGS_NAV: NavItem[] = [
+  { href: '/team',     label: 'Team' },
   { href: '/settings', label: 'Settings' },
 ];
 
-const ADMIN_NAV = [
-  { href: '/admin/companies', label: 'Companies' },
-  { href: '/admin/users', label: 'Users' },
-  { href: '/admin/revenue', label: 'Revenue' },
-  { href: '/admin/audit', label: 'Audit log' },
-];
+export function Shell({ children, companyName, userEmail, isSuperAdmin }: ShellProps) {
+  const pathname = usePathname();
+  const [loggingOut, setLoggingOut] = useState(false);
 
-interface ShellProps {
-  children: ReactNode;
-  userEmail: string;
-  isSuperAdmin: boolean;
-  companyName?: string;
-}
-
-/**
- * App shell with sidebar navigation. Same prop signature as the original.
- *
- * Nav visibility logic:
- * - MAIN_NAV + SETTINGS_NAV (Dashboard, Cover, Codes, etc): shown only when
- *   user has a company. Owners always have one. Superadmins may not.
- * - ADMIN_NAV (Companies, Users, Revenue, Audit): shown only to superadmins.
- *
- * Logout uses a <button> (not <Link>) to avoid Next.js auto-prefetch
- * triggering a silent logout.
- */
-export function Shell({ children, userEmail, isSuperAdmin, companyName }: ShellProps) {
-  const pathname = usePathname() || '/';
-  const router = useRouter();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
-
-  // companyName presence is the proxy for "user has a company associated".
   const hasCompany = Boolean(companyName);
 
-  async function handleSignOut() {
-    setSigningOut(true);
+  async function handleLogout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/login';
     } catch {
-      // even if the call fails, redirect to login
+      setLoggingOut(false);
     }
-    router.push('/login');
-    router.refresh();
   }
 
   return (
-    <div
-      className="min-h-screen text-ink relative overflow-x-hidden"
-      style={{
-        background: `
-          radial-gradient(ellipse 80% 60% at 15% 20%, rgba(74,122,140,0.25) 0%, transparent 60%),
-          radial-gradient(ellipse 70% 50% at 85% 80%, rgba(44,88,104,0.20) 0%, transparent 60%),
-          radial-gradient(ellipse 50% 40% at 50% 50%, rgba(90,146,168,0.08) 0%, transparent 60%),
-          linear-gradient(180deg, #0a0a0f 0%, #0f0f15 100%)
-        `,
-      }}
-    >
+    <div className="min-h-screen flex">
+      {/* ── SIDEBAR ──────────────────────────────────────────────── */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 w-64 flex-col transition-transform duration-200 ease-out ${
-          mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        } md:translate-x-0 md:flex flex`}
+        className="w-[240px] flex flex-col h-screen sticky top-0 border-r"
         style={{
-          background: 'rgba(15, 15, 20, 0.55)',
+          background: 'var(--sidebar-bg)',
+          borderColor: 'var(--sidebar-border)',
           backdropFilter: 'blur(40px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
         }}
       >
-        <div className="flex items-center justify-between p-6 border-b border-glass-border">
-          <Link
-            href={hasCompany ? '/dashboard' : '/admin/companies'}
-            className="text-ink hover:text-ink transition"
-            onClick={() => setMobileOpen(false)}
-          >
-            <PerenneLogo variant="extended" height={22} />
+        {/* Logo */}
+        <div className="px-5 py-5 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
+          <Link href="/dashboard" className="flex items-center gap-2.5 group">
+            <PerenneLogo variant="symbol" className="w-7 h-7" />
+            <div className="leading-tight">
+              <div className="font-display italic text-[15px] text-ink group-hover:text-accent transition">
+                Perenne
+              </div>
+              <div className="text-[9px] tracking-[0.18em] uppercase text-ink-faint font-mono">
+                Business
+              </div>
+            </div>
           </Link>
-          <button
-            type="button"
-            onClick={() => setMobileOpen(false)}
-            className="md:hidden text-ink-faint hover:text-ink text-xl leading-none px-2"
-            aria-label="Close menu"
-          >
-            ×
-          </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-4 space-y-6">
-          {/* Company-scoped nav: only when user actually has a company */}
+        {/* Company badge */}
+        {companyName && (
+          <div className="px-5 py-3 border-b text-[10px]" style={{ borderColor: 'var(--sidebar-border)' }}>
+            <div className="text-ink-faint uppercase tracking-[0.2em] mb-1 font-mono">Workspace</div>
+            <div className="text-ink-dim truncate">{companyName}</div>
+          </div>
+        )}
+
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-5">
           {hasCompany && (
-            <>
-              <NavSection
-                items={MAIN_NAV}
-                pathname={pathname}
-                onNav={() => setMobileOpen(false)}
-              />
-              <NavSection
-                title="Workspace"
-                items={SETTINGS_NAV}
-                pathname={pathname}
-                onNav={() => setMobileOpen(false)}
-              />
-            </>
+            <NavSection items={MAIN_NAV} pathname={pathname} />
           )}
 
-          {/* Admin-only nav for superadmins */}
           {isSuperAdmin && (
-            <NavSection
-              title="Superadmin"
-              items={ADMIN_NAV}
-              pathname={pathname}
-              onNav={() => setMobileOpen(false)}
-            />
+            <div>
+              <div className="px-3 mb-2 text-[9px] tracking-[0.22em] uppercase text-ink-faint font-mono">
+                Superadmin
+              </div>
+              <NavSection items={ADMIN_NAV} pathname={pathname} />
+            </div>
           )}
 
-          {/* Hint when superadmin has no company yet */}
-          {isSuperAdmin && !hasCompany && (
-            <div
-              className="rounded-xl p-3 text-[11px] leading-relaxed"
-              style={{
-                background: 'rgba(74, 122, 140, 0.08)',
-                border: '1px solid rgba(74, 122, 140, 0.2)',
-              }}
-            >
-              <div className="text-ink-dim mb-1">No company associated</div>
-              <div className="text-ink-faint">
-                Create a company under <span className="font-mono text-accent-bright">Companies</span> to unlock the rest of the app.
+          {hasCompany && (
+            <div>
+              <div className="px-3 mb-2 text-[9px] tracking-[0.22em] uppercase text-ink-faint font-mono">
+                Settings
               </div>
+              <NavSection items={SETTINGS_NAV} pathname={pathname} />
             </div>
           )}
         </nav>
 
-        <div className="p-4 border-t border-glass-border">
-          <div
-            className="rounded-2xl p-3"
-            style={{
-              background: 'rgba(255, 255, 255, 0.03)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-            }}
-          >
-            <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase mb-1">
-              {isSuperAdmin ? 'Superadmin' : 'Owner'}
-            </div>
-            {companyName && (
-              <div className="text-[11px] font-display italic text-ink-dim mb-0.5 truncate">
-                {companyName}
-              </div>
-            )}
-            <div className="text-xs text-ink truncate" title={userEmail}>
+        {/* ── BOTTOM: Theme toggle + User + Logout ─────────────── */}
+        <div
+          className="px-3 py-3 space-y-2 border-t"
+          style={{ borderColor: 'var(--sidebar-border)' }}
+        >
+          {/* Theme toggle — confirmed position: sidebar bottom */}
+          <ThemeToggle />
+
+          {userEmail && (
+            <div className="px-3 py-1.5 text-[10px] text-ink-faint font-mono truncate">
               {userEmail}
             </div>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              disabled={signingOut}
-              className="block mt-2 text-[11px] text-ink-faint hover:text-ink transition font-mono disabled:opacity-50 cursor-pointer"
-            >
-              {signingOut ? 'Signing out…' : 'Sign out →'}
-            </button>
-          </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="w-full px-3 py-2 rounded-lg border border-glass-border bg-surface-faint hover:bg-surface-hover hover:border-glass-hairline transition text-[11px] font-mono text-ink-dim hover:text-ink text-left disabled:opacity-50"
+          >
+            {loggingOut ? 'Signing out…' : 'Sign out'}
+          </button>
         </div>
       </aside>
 
-      <header
-        className="md:hidden sticky top-0 z-20 flex items-center justify-between px-4 py-3"
-        style={{
-          background: 'rgba(15, 15, 20, 0.55)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setMobileOpen(true)}
-          className="text-ink-dim hover:text-ink text-xl"
-          aria-label="Open menu"
-        >
-          ☰
-        </button>
-        <PerenneLogo variant="extended" height={18} />
-        <div className="w-6" />
-      </header>
-
-      <main className="md:pl-64 min-h-screen">
-        <div className="max-w-7xl mx-auto p-6 md:p-10">{children}</div>
-      </main>
-
-      {mobileOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-20 bg-black/50 backdrop-blur-sm"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
+      {/* ── MAIN ─────────────────────────────────────────────────── */}
+      <main className="flex-1 px-8 py-8 overflow-x-hidden">{children}</main>
     </div>
   );
 }
 
-interface NavSectionProps {
-  title?: string;
-  items: { href: string; label: string }[];
-  pathname: string;
-  onNav: () => void;
-}
-
-function NavSection({ title, items, pathname, onNav }: NavSectionProps) {
+function NavSection({ items, pathname }: { items: NavItem[]; pathname: string }) {
   return (
-    <div>
-      {title && (
-        <div className="text-[10px] font-mono text-ink-faint tracking-widest uppercase px-3 mb-2">
-          {title}
-        </div>
-      )}
-      <ul className="space-y-0.5">
-        {items.map((item) => {
-          const active =
-            pathname === item.href ||
-            (item.href !== '/dashboard' && pathname.startsWith(item.href + '/'));
-          return (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                onClick={onNav}
-                className={`block px-3 py-2 rounded-xl text-sm transition-all ${
-                  active
-                    ? 'bg-accent-soft text-ink border border-accent/30'
-                    : 'text-ink-dim hover:text-ink hover:bg-white/[0.04] border border-transparent'
-                }`}
-              >
-                {item.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+    <div className="space-y-0.5">
+      {items.map((item) => {
+        const active = pathname === item.href || pathname.startsWith(item.href + '/');
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`block px-3 py-2 rounded-lg text-xs transition ${
+              active
+                ? 'bg-accent-soft text-accent border border-accent/20'
+                : 'text-ink-dim hover:text-ink hover:bg-surface-faint border border-transparent'
+            }`}
+          >
+            {item.label}
+          </Link>
+        );
+      })}
     </div>
   );
 }

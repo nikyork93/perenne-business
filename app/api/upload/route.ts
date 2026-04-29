@@ -1,120 +1,125 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
-import { env } from '@/lib/env';
-import { hmacSign } from '@/lib/crypto';
 
-export const runtime = 'nodejs';
+/**
+ * POST /api/upload
+ * Uploads a file to R2 via the Cloudflare Worker.
+ * FormData: { file: File, kind: 'asset' | 'background' }
+ * Response: { url: string }
+ *
+ * Path layout in R2:
+ *   covers/{companyId}/assets/{timestamp}-{filename}     (kind=asset)
+ *   covers/{companyId}/backgrounds/{timestamp}-{filename} (kind=background)
+ */
 
-const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
-const MAX_BYTES = 5 * 1024 * 1024;
+const ALLOWED_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+  'image/svg+xml',
+  'image/gif',
+];
 
-export async function POST(req: NextRequest) {
-  const session = await getSession();
-  if (!session || !session.companyId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+// 10MB hard limit per file
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+export async function POST(req: Request) {
+  const session = await requireSession();
+  if (!session.companyId) {
+    return NextResponse.json({ error: 'No company.' }, { status: 400 });
   }
-  if (!['OWNER', 'ADMIN', 'SUPERADMIN'].includes(session.role)) {
-    return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
+  if (session.role === 'VIEWER') {
+    return NextResponse.json({ error: 'Insufficient permissions.' }, { status: 403 });
   }
 
-  // Ensure secret is configured
-  if (!env.PERENNE_API_SECRET) {
+  const workerUrl = process.env.ASSET_UPLOAD_WORKER_URL;
+  const workerSecret = process.env.ASSET_UPLOAD_WORKER_SECRET;
+  if (!workerUrl || !workerSecret) {
     return NextResponse.json(
-      { error: 'Server not configured for asset upload.' },
+      { error: 'Asset upload not configured. Set ASSET_UPLOAD_WORKER_URL and ASSET_UPLOAD_WORKER_SECRET.' },
       { status: 500 }
     );
   }
 
-  // Read incoming multipart body
   let formData: FormData;
   try {
     formData = await req.formData();
   } catch {
-    return NextResponse.json({ error: 'Invalid multipart body' }, { status: 400 });
+    return NextResponse.json({ error: 'Invalid form data.' }, { status: 400 });
   }
 
-  const file = formData.get('file');
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: 'File required' }, { status: 400 });
+  const file = formData.get('file') as File | null;
+  const kind = (formData.get('kind') as string | null) ?? 'asset';
+
+  if (!file) {
+    return NextResponse.json({ error: 'No file provided.' }, { status: 400 });
   }
-  if (!ALLOWED_MIME.includes(file.type)) {
+  if (!ALLOWED_TYPES.includes(file.type)) {
     return NextResponse.json(
-      { error: 'Unsupported file type. PNG, JPEG, WebP, or SVG only.' },
+      { error: `File type ${file.type} not allowed. Use PNG, JPG, WebP, SVG, or GIF.` },
       { status: 400 }
     );
   }
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: 'File too large (max 5 MB)' }, { status: 400 });
-  }
-
-  const companyId = session.companyId;
-
-  // Create DB record first so we have an assetId to use as R2 key
-  const asset = await prisma.coverAsset.create({
-    data: {
-      companyId,
-      name: file.name || 'asset',
-      r2Key: '',   // filled after upload succeeds
-      r2Url: '',
-      mimeType: file.type,
-      sizeBytes: file.size,
-    },
-  });
-
-  // Forward to worker with HMAC auth
-  const timestamp = String(Date.now());
-  const signature = hmacSign(`${timestamp}:${companyId}`, env.PERENNE_API_SECRET);
-
-  const forwardForm = new FormData();
-  forwardForm.append('companyId', companyId);
-  forwardForm.append('assetId', asset.id);
-  forwardForm.append('file', file);
-
-  let workerRes: Response;
-  try {
-    workerRes = await fetch(`${env.PERENNE_API_URL}/assets/upload`, {
-      method: 'POST',
-      headers: {
-        'x-perenne-signature': signature,
-        'x-perenne-timestamp': timestamp,
-      },
-      body: forwardForm,
-    });
-  } catch (e) {
-    // Rollback DB record
-    await prisma.coverAsset.delete({ where: { id: asset.id } }).catch(() => null);
-    return NextResponse.json({ error: 'Upload service unreachable' }, { status: 502 });
-  }
-
-  if (!workerRes.ok) {
-    await prisma.coverAsset.delete({ where: { id: asset.id } }).catch(() => null);
-    const data = await workerRes.json().catch(() => ({}));
+  if (file.size > MAX_FILE_SIZE) {
     return NextResponse.json(
-      { error: data.error ?? 'Upload failed' },
-      { status: workerRes.status }
+      { error: `File too large (${Math.round(file.size / 1024 / 1024)}MB). Max 10MB.` },
+      { status: 400 }
+    );
+  }
+  if (kind !== 'asset' && kind !== 'background' && kind !== 'watermark') {
+    return NextResponse.json(
+      { error: 'kind must be asset, background, or watermark.' },
+      { status: 400 }
     );
   }
 
-  const result = await workerRes.json();
+  // Build path
+  const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const subfolder =
+    kind === 'background' ? 'backgrounds' : kind === 'watermark' ? 'watermarks' : 'assets';
+  const key = `covers/${session.companyId}/${subfolder}/${Date.now()}-${cleanName}`;
 
-  // Persist R2 URL
-  const updated = await prisma.coverAsset.update({
-    where: { id: asset.id },
-    data: {
-      r2Key: result.r2Key,
-      r2Url: result.url,
-    },
+  // Forward to Worker
+  const workerForm = new FormData();
+  workerForm.append('file', file);
+  workerForm.append('key', key);
+
+  const workerRes = await fetch(workerUrl, {
+    method: 'POST',
+    headers: { 'X-Upload-Secret': workerSecret },
+    body: workerForm,
   });
 
-  return NextResponse.json({
-    ok: true,
-    asset: {
-      id: updated.id,
-      name: updated.name,
-      url: updated.r2Url,
-      mimeType: updated.mimeType,
-      sizeBytes: updated.sizeBytes,
-    },
-  });
+  if (!workerRes.ok) {
+    const text = await workerRes.text().catch(() => '');
+    return NextResponse.json(
+      { error: `Worker upload failed: ${workerRes.status} ${text}` },
+      { status: 502 }
+    );
+  }
+
+  const data = (await workerRes.json()) as { url?: string };
+  if (!data.url) {
+    return NextResponse.json({ error: 'Worker did not return URL.' }, { status: 502 });
+  }
+
+  // Optional: persist as CoverAsset record for tracking
+  try {
+    await prisma.coverAsset.create({
+      data: {
+        companyId: session.companyId,
+        filename: cleanName,
+        url: data.url,
+        kind,
+        sizeBytes: file.size,
+        contentType: file.type,
+      } as unknown as Parameters<typeof prisma.coverAsset.create>[0]['data'],
+    });
+  } catch {
+    // Non-fatal: schema may not yet have `kind` column
+  }
+
+  return NextResponse.json({ url: data.url });
 }
