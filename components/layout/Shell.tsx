@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { PerenneLogo } from '@/components/layout/PerenneLogo';
 
 interface ShellProps {
   children: React.ReactNode;
@@ -38,50 +39,6 @@ const SETTINGS_NAV: NavItem[] = [
   { href: '/settings', label: 'Settings' },
 ];
 
-/**
- * Inline Perenne brand mark — small SVG, no external dependency.
- * Renders a teal-tinted "P" inside a glass disk, matching the app aura.
- */
-function BrandMark({ className = '' }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 32 32"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
-      aria-hidden="true"
-    >
-      <defs>
-        <radialGradient id="bm-glow" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#4a7a8c" stopOpacity="0.85" />
-          <stop offset="100%" stopColor="#4a7a8c" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-      <circle cx="16" cy="16" r="15" fill="url(#bm-glow)" />
-      <circle
-        cx="16"
-        cy="16"
-        r="14"
-        stroke="currentColor"
-        strokeOpacity="0.3"
-        strokeWidth="1"
-      />
-      <text
-        x="16"
-        y="22"
-        textAnchor="middle"
-        fontFamily="serif"
-        fontStyle="italic"
-        fontSize="18"
-        fontWeight="500"
-        fill="currentColor"
-      >
-        P
-      </text>
-    </svg>
-  );
-}
-
 export function Shell({ children, companyName, userEmail, isSuperAdmin }: ShellProps) {
   const pathname = usePathname();
   const [loggingOut, setLoggingOut] = useState(false);
@@ -110,19 +67,14 @@ export function Shell({ children, companyName, userEmail, isSuperAdmin }: ShellP
           backdropFilter: 'blur(40px) saturate(180%)',
         }}
       >
-        {/* Brand */}
+        {/* Brand — Perenne Note logo extended (original SVG) */}
         <div className="px-5 py-5 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
-          <Link href="/dashboard" className="flex items-center gap-2.5 group">
-            <BrandMark className="w-7 h-7 text-ink group-hover:text-accent transition" />
-            <div className="leading-tight">
-              <div className="font-display italic text-[15px] text-ink group-hover:text-accent transition">
-                Perenne
-              </div>
-              <div className="text-[9px] tracking-[0.18em] uppercase text-ink-faint font-mono">
-                Business
-              </div>
-            </div>
+          <Link href="/dashboard" className="block group text-ink hover:text-accent transition-colors">
+            <PerenneLogo variant="extended" height={22} />
           </Link>
+          <div className="mt-2 text-[10px] tracking-[0.22em] uppercase text-ink-faint font-mono">
+            Business
+          </div>
         </div>
 
         {/* Company badge */}
@@ -161,7 +113,6 @@ export function Shell({ children, companyName, userEmail, isSuperAdmin }: ShellP
           className="px-3 py-3 space-y-2 border-t"
           style={{ borderColor: 'var(--sidebar-border)' }}
         >
-          {/* Theme toggle — sidebar bottom */}
           <ThemeToggle />
 
           {userEmail && (
