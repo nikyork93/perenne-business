@@ -59,6 +59,14 @@ interface PageEditorProps {
   onAssetUpload?: (file: File) => Promise<{ url: string } | null>;
   /** Hint kept for backward compat — useState initialiser also checks window.fabric directly. */
   fabricAlreadyLoaded?: boolean;
+  /**
+   * Whether this editor is the currently visible tab. Used to gate
+   * window-level side effects (keyboard listener) so that pressing
+   * keys on one editor doesn't act on a hidden sibling editor.
+   * Defaults to true for backward compat with callers that don't
+   * pass it (e.g. standalone usage outside EditorClient).
+   */
+  isActive?: boolean;
 }
 
 // ─── sessionStorage persistence ──────────────────────────────────────
@@ -119,6 +127,7 @@ export function PageEditor({
   onSave,
   onAssetUpload,
   fabricAlreadyLoaded,
+  isActive = true,
 }: PageEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -454,7 +463,12 @@ export function PageEditor({
   }
 
   // ─── Keyboard shortcuts ────────────────────────────────────────────
+  // Gated by `isActive` so the listener is only attached when this
+  // editor is the currently-visible tab. Without this guard, pressing
+  // Arrow / Delete on the active tab would also move/delete the active
+  // object on the hidden sibling editor (since both are mounted).
   useEffect(() => {
+    if (!isActive) return;
     function handleKey(e: KeyboardEvent) {
       if (!activeObj) return;
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
@@ -470,7 +484,7 @@ export function PageEditor({
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeObj]);
+  }, [activeObj, isActive]);
 
   // ─── Save ──────────────────────────────────────────────────────────
   function buildWatermarks(): CoverAssetRef[] {
@@ -572,13 +586,13 @@ export function PageEditor({
                 <Whisper className="py-4">No watermarks yet.</Whisper>
               )}
               {assets.map((a) => {
-                const isActive = activeObj?.perenneAssetId === a.id;
+                const isAssetActive = activeObj?.perenneAssetId === a.id;
                 return (
                   <div
                     key={a.id}
                     onClick={() => selectAsset(a)}
                     className={`group flex items-center gap-2.5 p-2 rounded-lg border cursor-pointer transition ${
-                      isActive
+                      isAssetActive
                         ? 'bg-accent/10 border-accent/40'
                         : 'bg-surface-faint border-border-subtle hover:bg-surface-hover hover:border-glass-hairline'
                     }`}

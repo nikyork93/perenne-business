@@ -31,6 +31,10 @@ interface FabricImageLike {
   scaleY: number;
   angle: number;
   opacity: number;
+  /** Natural image width — set by fabric.Image when the source image loads. */
+  width?: number;
+  /** Natural image height — set by fabric.Image when the source image loads. */
+  height?: number;
   perenneAssetId?: number;
   perenneAssetName?: string;
   perenneInverted?: boolean;
@@ -56,6 +60,122 @@ interface CoverEditorProps {
   onSave?: (config: CoverConfigData) => Promise<void> | void;
   onAssetUpload?: (file: File) => Promise<{ url: string } | null>;
   onBackgroundUpload?: (file: File) => Promise<{ url: string } | null>;
+  /**
+   * Whether this editor is the currently visible tab. Gates window-
+   * level side effects (keyboard listener). Defaults to true for
+   * backward compat with standalone usage.
+   */
+  isActive?: boolean;
+}
+
+// ─── Layout templates ────────────────────────────────────────────────
+//
+// Each template describes a SINGLE-LOGO layout — position (normalised
+// 0-1 coords), envelope size (max-edge as a fraction of canvas width),
+// and rotation. Click a template thumbnail to apply that layout to the
+// currently-selected asset (or to the first asset if nothing's
+// selected).
+//
+// `maxEdge` is the bigger of the rendered logo's width or height as a
+// fraction of canvas width. We use max-edge instead of width-fraction
+// because rotation by 90° swaps visual width and height; with
+// max-edge the logo keeps the same visual envelope size regardless
+// of orientation.
+
+interface LayoutTemplate {
+  name: string;
+  layout: {
+    /** Center position, normalised 0-1 across the canvas. */
+    x: number;
+    y: number;
+    /** Logo's longest visible side as a fraction of canvas width. */
+    maxEdge: number;
+    /** Rotation in degrees. */
+    angle: number;
+  };
+}
+
+const LAYOUT_TEMPLATES: ReadonlyArray<LayoutTemplate> = [
+  { name: 'Center medium',  layout: { x: 0.50, y: 0.50, maxEdge: 0.40, angle:   0 } },
+  { name: 'Center bold',    layout: { x: 0.50, y: 0.50, maxEdge: 0.70, angle:   0 } },
+  { name: 'Bottom band',    layout: { x: 0.50, y: 0.85, maxEdge: 0.50, angle:   0 } },
+  { name: 'Top corner',     layout: { x: 0.78, y: 0.16, maxEdge: 0.22, angle:   0 } },
+  { name: 'Vertical edge',  layout: { x: 0.88, y: 0.50, maxEdge: 0.55, angle:  90 } },
+  { name: 'Bottom corner',  layout: { x: 0.18, y: 0.85, maxEdge: 0.22, angle:   0 } },
+];
+
+// ─── Template thumbnail ──────────────────────────────────────────────
+//
+// Renders a tiny preview of the cover with the user's primary logo
+// placed at the template's position/size/rotation. Pure HTML/CSS — no
+// Fabric, no canvas. The logo is positioned in editor coordinates
+// inside an inner div that's CSS-scaled down to thumbnail size, so
+// math stays simple ("apply layout" and "render thumbnail" share the
+// same coord system).
+
+interface TemplateThumbnailProps {
+  layout: LayoutTemplate['layout'];
+  bgColor: string;
+  bgImageUrl?: string;
+  primaryAssetUrl?: string;
+  invert?: boolean;
+  thumbW?: number;
+}
+
+function TemplateThumbnail({
+  layout,
+  bgColor,
+  bgImageUrl,
+  primaryAssetUrl,
+  invert,
+  thumbW = 64,
+}: TemplateThumbnailProps) {
+  // Preserve canvas aspect ratio (392 × 540 → ~0.725).
+  const ratio = EDITOR_CANVAS_HEIGHT / EDITOR_CANVAS_WIDTH;
+  const thumbH = Math.round(thumbW * ratio);
+  // Logo's longest side in thumbnail pixels.
+  const maxEdgePx = thumbW * layout.maxEdge;
+
+  return (
+    <div
+      style={{
+        width: thumbW,
+        height: thumbH,
+        backgroundColor: bgColor,
+        backgroundImage: bgImageUrl ? `url(${bgImageUrl})` : undefined,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: 4,
+        flexShrink: 0,
+      }}
+    >
+      {primaryAssetUrl && (
+        <img
+          src={primaryAssetUrl}
+          alt=""
+          draggable={false}
+          style={{
+            position: 'absolute',
+            // The img is centred on (left, top) via translate(-50%, -50%).
+            // max-width/max-height bound the longest side to maxEdgePx;
+            // width/height: auto preserves the natural aspect ratio.
+            left: layout.x * thumbW,
+            top: layout.y * thumbH,
+            maxWidth: maxEdgePx,
+            maxHeight: maxEdgePx,
+            width: 'auto',
+            height: 'auto',
+            transform: `translate(-50%, -50%) rotate(${layout.angle}deg)`,
+            transformOrigin: 'center center',
+            filter: invert ? 'invert(1)' : undefined,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+    </div>
+  );
 }
 
 /**
@@ -77,6 +197,7 @@ export function CoverEditor({
   onSave,
   onAssetUpload,
   onBackgroundUpload,
+  isActive = true,
 }: CoverEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -541,29 +662,43 @@ export function CoverEditor({
     setSelTick((t) => t + 1);
   }
 
-  // ─── Templates ─────────────────────────────────────────────────────
-  function applyTemplate(name: 'minimal' | 'corporate' | 'bold') {
+  // ─── Layout templates ──────────────────────────────────────────────
+  // Apply a LayoutTemplate to the active asset (or to the first asset
+  // if nothing's selected). The fabric scale is computed from the
+  // logo's natural longest edge so that rotated and non-rotated
+  // templates give the same visual envelope size.
+  function applyLayoutTemplate(tpl: LayoutTemplate) {
     if (assets.length === 0) {
       alert('Upload at least one logo first.');
       return;
     }
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    const primary = assets[0].fabricObj;
-    const setup: Record<string, Record<string, number>> = {
-      minimal:   { left: EDITOR_CANVAS_WIDTH / 2,    top: EDITOR_CANVAS_HEIGHT / 2,    scaleX: 0.35, scaleY: 0.35, angle: 0, opacity: 1 },
-      corporate: { left: EDITOR_CANVAS_WIDTH * 0.25, top: EDITOR_CANVAS_HEIGHT * 0.18, scaleX: 0.30, scaleY: 0.30, angle: 0, opacity: 1 },
-      bold:      { left: EDITOR_CANVAS_WIDTH / 2,    top: EDITOR_CANVAS_HEIGHT / 2,    scaleX: 0.75, scaleY: 0.75, angle: 0, opacity: 1 },
-    };
-    primary.set(setup[name]);
-    primary.setCoords?.();
-    canvas.setActiveObject(primary);
+
+    const target = activeObj ?? assets[0].fabricObj;
+    const naturalMax = Math.max(target.width ?? 100, target.height ?? 100);
+    const targetMaxPx = EDITOR_CANVAS_WIDTH * tpl.layout.maxEdge;
+    const scale = targetMaxPx / naturalMax;
+
+    target.set({
+      left: tpl.layout.x * EDITOR_CANVAS_WIDTH,
+      top: tpl.layout.y * EDITOR_CANVAS_HEIGHT,
+      scaleX: scale,
+      scaleY: scale,
+      angle: tpl.layout.angle,
+    });
+    target.setCoords?.();
+    canvas.setActiveObject(target);
     canvas.renderAll();
     setSelTick((t) => t + 1);
   }
 
   // ─── Keyboard shortcuts ────────────────────────────────────────────
+  // Gated by `isActive` so the listener is only attached when this
+  // editor is the currently-visible tab — see PageEditor for the same
+  // pattern and rationale.
   useEffect(() => {
+    if (!isActive) return;
     function handleKey(e: KeyboardEvent) {
       if (!activeObj) return;
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
@@ -580,7 +715,7 @@ export function CoverEditor({
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeObj]);
+  }, [activeObj, isActive]);
 
   // ─── Serialize to config ───────────────────────────────────────────
   function buildConfig(): CoverConfigData {
@@ -685,13 +820,13 @@ export function CoverEditor({
                 <Whisper className="py-4">No assets yet. Upload a logo to start.</Whisper>
               )}
               {assets.map((a) => {
-                const isActive = activeObj?.perenneAssetId === a.id;
+                const isAssetActive = activeObj?.perenneAssetId === a.id;
                 return (
                   <div
                     key={a.id}
                     onClick={() => selectAsset(a)}
                     className={`group flex items-center gap-2.5 p-2 rounded-lg border cursor-pointer transition ${
-                      isActive
+                      isAssetActive
                         ? 'bg-accent/10 border-accent/40'
                         : 'bg-surface-faint border-border-subtle hover:bg-surface-hover hover:border-glass-hairline'
                     }`}
@@ -723,22 +858,47 @@ export function CoverEditor({
           </div>
 
           <div>
-            <SectionLabel>Templates</SectionLabel>
-            <div className="flex flex-col gap-1.5">
-              {(['minimal', 'corporate', 'bold'] as const).map((name) => (
-                <button
-                  key={name}
-                  type="button"
-                  onClick={() => applyTemplate(name)}
-                  className="btn !justify-start !px-3"
-                >
-                  <span className="font-display italic capitalize">{name}</span>
-                  <span className="ml-auto text-[10px] text-ink-faint">
-                    {name === 'minimal' ? 'center' : name === 'corporate' ? 'top-left' : 'fill'}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <SectionLabel>Layout templates</SectionLabel>
+            {assets.length === 0 ? (
+              <Whisper className="py-4">
+                Upload a logo to see template previews.
+              </Whisper>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {LAYOUT_TEMPLATES.map((tpl) => {
+                  // Pick which logo to render in the thumbnails:
+                  //   - the currently-selected one if any,
+                  //   - else the first uploaded asset.
+                  // Thumbnails update live as the user uploads, swaps
+                  // selection, changes bgColor / bgImageUrl / inverts.
+                  const primary = activeObj
+                    ? assets.find((a) => a.fabricObj === activeObj) ?? assets[0]
+                    : assets[0];
+                  const primaryUrl = primary?.url || primary?.dataUrl;
+                  return (
+                    <button
+                      key={tpl.name}
+                      type="button"
+                      onClick={() => applyLayoutTemplate(tpl)}
+                      title={tpl.name}
+                      className="flex items-center gap-3 p-2 rounded-lg border border-glass-border bg-surface-faint hover:bg-surface-hover hover:border-glass-hairline transition group text-left"
+                    >
+                      <TemplateThumbnail
+                        layout={tpl.layout}
+                        bgColor={bgColor}
+                        bgImageUrl={bgImageUrl}
+                        primaryAssetUrl={primaryUrl}
+                        invert={primary?.inverted}
+                        thumbW={64}
+                      />
+                      <span className="flex-1 text-xs text-ink-dim group-hover:text-ink font-mono">
+                        {tpl.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </aside>
 

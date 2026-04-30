@@ -135,21 +135,37 @@ export function EditorClient({ initialConfig }: Props) {
         </div>
       )}
 
-      {/* ── Active tab ────────────────────────────────────────── */}
-      {tab === 'cover' ? (
+      {/* ── Editors — both stay mounted at all times ──────────
+           Conditional rendering would unmount the inactive editor
+           and lose all unsaved state (uploads, current selection,
+           paper preview settings, default opacity, etc.). We keep
+           both alive and toggle visibility via display:none, which
+           preserves the React tree, the Fabric canvases, the file
+           inputs and every piece of in-memory state. The trade-off
+           is two Fabric canvases in memory at once; that's a few
+           hundred KB and is negligible compared to the UX win.
+
+           `isActive` is passed so each editor can gate global side
+           effects (in particular keyboard shortcuts) — without it,
+           pressing Arrow keys on the visible editor would also move
+           the active object on the hidden editor. */}
+      <div style={{ display: tab === 'cover' ? 'block' : 'none' }}>
         <CoverEditor
           initialConfig={initialConfig}
           onSave={saveCover}
           onAssetUpload={(file) => uploadFile(file, 'asset')}
           onBackgroundUpload={(file) => uploadFile(file, 'background')}
+          isActive={tab === 'cover'}
         />
-      ) : (
+      </div>
+      <div style={{ display: tab === 'pages' ? 'block' : 'none' }}>
         <PageEditor
           initialWatermarks={initialConfig.pageWatermarks ?? []}
           onSave={saveWatermarks}
           onAssetUpload={(file) => uploadFile(file, 'watermark')}
+          isActive={tab === 'pages'}
         />
-      )}
+      </div>
     </>
   );
 }
