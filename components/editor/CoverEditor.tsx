@@ -673,7 +673,7 @@ export function CoverEditor({
               height={EDITOR_CANVAS_HEIGHT}
             />
           </div>
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 font-mono text-[10px] tracking-[0.1em] text-ink-faint py-1.5 px-3.5 bg-black/30 backdrop-blur border border-glass-border rounded-full">
+          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 font-mono text-[10px] tracking-[0.1em] text-white/85 py-1.5 px-3.5 bg-black/55 backdrop-blur border border-white/10 rounded-full whitespace-nowrap">
             {EDITOR_CANVAS_WIDTH}×{EDITOR_CANVAS_HEIGHT} · ratio 0.725 · radius {EDITOR_CORNER_RADIUS}px
           </div>
         </main>

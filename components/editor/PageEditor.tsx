@@ -6,7 +6,6 @@ import { Button, Slider, Input, SectionLabel, Whisper } from '@/components/ui';
 import {
   EDITOR_CANVAS_WIDTH,
   EDITOR_CANVAS_HEIGHT,
-  EDITOR_CORNER_RADIUS,
   type CoverAssetRef,
 } from '@/types/cover';
 import { attachSnapGuides, makeFillColorFilter } from './snapGuides';
@@ -58,34 +57,62 @@ interface PageEditorProps {
   initialWatermarks: CoverAssetRef[];
   onSave?: (watermarks: CoverAssetRef[]) => Promise<void> | void;
   onAssetUpload?: (file: File) => Promise<{ url: string } | null>;
-  /**
-   * Hint shown if Fabric is already loaded — kept for backward compat
-   * with EditorClient. The fabricReady state initialiser also checks
-   * window.fabric directly, so this prop is now redundant in most cases
-   * but harmless when set.
-   */
+  /** Hint kept for backward compat — useState initialiser also checks window.fabric directly. */
   fabricAlreadyLoaded?: boolean;
 }
+
+// ─── sessionStorage persistence ──────────────────────────────────────
+// Local UI state (paper hex, pattern, scale, default opacity) that
+// resets on tab-switch unmount otherwise. sessionStorage so it lives
+// for the browser session only — not polluting localStorage long-term.
+
+const SS_KEY = {
+  hex: 'perenne.page-editor.paper-hex',
+  pattern: 'perenne.page-editor.paper-pattern',
+  scale: 'perenne.page-editor.paper-scale',
+  defaultOpacity: 'perenne.page-editor.default-opacity',
+} as const;
+
+function ssGet(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try { return window.sessionStorage.getItem(key); } catch { return null; }
+}
+function ssSet(key: string, val: string) {
+  if (typeof window === 'undefined') return;
+  try { window.sessionStorage.setItem(key, val); } catch { /* quota / private mode */ }
+}
+
+const DEFAULT_OPACITY = 0.3;
+
+const VALID_PATTERNS: ReadonlyArray<PaperPattern> = ['BLANK', 'RULED', 'GRID', 'DOTS'];
 
 /**
  * PageEditor — design watermarks that appear on every page of the notebook
  * EXCEPT the "Property of a thinking human" page (index 1).
  *
- * Canvas shows a single page preview (392 × 540, ratio 0.725, identical to
- * the notebook's physical 725 × 1000 page). The preview is rendered with
- * a paper-coloured backdrop + optional paper pattern (BLANK/RULED/GRID/
- * DOTS) so the user can see how their watermarks read on real paper.
- * The paper preview is purely local — it is NOT persisted to the DB and
- * has no effect on the iOS render.
+ * Canvas shows a single page preview (392 × 540, ratio 0.725, identical
+ * to the notebook's physical 725 × 1000 page). The preview backdrop
+ * paints the chosen paper colour + optional pattern (BLANK/RULED/GRID/
+ * DOTS) under a transparent Fabric canvas. Paper preview is purely
+ * local — it is NOT persisted to the DB and has no effect on iOS.
  *
- * v21 fixes:
- *   1. Fabric tab-switch white-rect — useState initialiser checks
- *      window.fabric so the canvas re-mounts immediately on tab change.
- *   2. Snap guides — center H/V + 10% margins, magenta dashed.
- *   3. Live slider sync — forceSync handler on object:scaling/moving/
- *      rotating/modified, scale slider extended to 1–500%.
- *   4. True-white invert — custom FillColor filter replaces stock Invert.
- *   5. Paper preview UI — color/pattern/scale, local-only.
+ * v22 changes vs v21:
+ *   - CSS shorthand bug: `backgroundColor` instead of `background` on
+ *     the paper backdrop and on every thumbnail. The shorthand was
+ *     clearing backgroundImage to none, and React's diff wasn't re-
+ *     applying the (unchanged) image, so the pattern silently
+ *     disappeared whenever the user changed colour.
+ *   - iOS-style controls: circle paper-colour swatches with checkmark
+ *     when selected; tall page-shaped pattern tiles with no label;
+ *     three pattern-size buttons (100/150/200) replacing the slider.
+ *   - Caption pill made legible: white text on a darker pill so it
+ *     reads in both themes.
+ *   - Page corners: rounded only on the LEFT side (top-left, bottom-
+ *     left) at 14px so it reads as the left page of an open notebook.
+ *   - Default-opacity selector for new uploads (10/20/30/50). Existing
+ *     per-watermark slider in the right panel is unchanged.
+ *   - sessionStorage persistence so paper-preview / default-opacity
+ *     state survives the Pages → Cover → Pages tab cycle.
  */
 export function PageEditor({
   initialWatermarks,
@@ -98,16 +125,9 @@ export function PageEditor({
   const fabricCanvasRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nextIdRef = useRef(1);
-  /** Detach function returned by attachSnapGuides — called on unmount. */
   const detachSnapRef = useRef<(() => void) | null>(null);
 
-  /**
-   * Bug 1 fix: initialise from window.fabric so re-mount after a tab
-   * switch (Cover → Pages → Cover) starts ready immediately. Next.js
-   * <Script> dedupes by URL and `onLoad` does not refire on remount,
-   * so without this the second mount stays in `false` forever and
-   * the canvas never initialises → white rect.
-   */
+  /** Fabric ready — initialised from window.fabric so a tab re-mount picks up an already-loaded fabric. */
   const [fabricReady, setFabricReady] = useState<boolean>(() => {
     if (fabricAlreadyLoaded) return true;
     if (typeof window === 'undefined') return false;
@@ -121,16 +141,42 @@ export function PageEditor({
   const [selTick, setSelTick] = useState(0);
   const [saving, setSaving] = useState(false);
 
-  // ─── Paper preview state (local only — NOT persisted) ──────────────
-  const [paperHex, setPaperHex] = useState<string>(DEFAULT_PAPER_HEX);
-  const [paperPattern, setPaperPattern] =
-    useState<PaperPattern>(DEFAULT_PAPER_PATTERN);
-  const [paperScale, setPaperScale] = useState<number>(DEFAULT_PAPER_SCALE);
+  // ─── Paper preview state (local only, persisted to sessionStorage) ─
 
-  // ─── Safety net for fabricReady ────────────────────────────────────
-  // If <Script onLoad> doesn't fire (Next.js dedup edge case where the
-  // script is in-flight when this component mounts) we poll briefly so
-  // we don't get stuck. Stops itself once fabric appears or after 5s.
+  const [paperHex, setPaperHex] = useState<string>(() => {
+    const saved = ssGet(SS_KEY.hex);
+    return saved && /^#[0-9a-f]{6}$/i.test(saved) ? saved : DEFAULT_PAPER_HEX;
+  });
+
+  const [paperPattern, setPaperPattern] = useState<PaperPattern>(() => {
+    const saved = ssGet(SS_KEY.pattern) as PaperPattern | null;
+    return saved && VALID_PATTERNS.includes(saved) ? saved : DEFAULT_PAPER_PATTERN;
+  });
+
+  const [paperScale, setPaperScale] = useState<number>(() => {
+    const saved = ssGet(SS_KEY.scale);
+    const n = saved ? Number(saved) : NaN;
+    return Number.isFinite(n) && n >= 0.5 && n <= 2.0 ? n : DEFAULT_PAPER_SCALE;
+  });
+
+  const [defaultOpacity, setDefaultOpacity] = useState<number>(() => {
+    const saved = ssGet(SS_KEY.defaultOpacity);
+    const n = saved ? Number(saved) : NaN;
+    return Number.isFinite(n) && n >= 0 && n <= 1 ? n : DEFAULT_OPACITY;
+  });
+
+  // Mirror state into sessionStorage so the next mount picks up the same values.
+  useEffect(() => { ssSet(SS_KEY.hex, paperHex); }, [paperHex]);
+  useEffect(() => { ssSet(SS_KEY.pattern, paperPattern); }, [paperPattern]);
+  useEffect(() => { ssSet(SS_KEY.scale, String(paperScale)); }, [paperScale]);
+  useEffect(() => { ssSet(SS_KEY.defaultOpacity, String(defaultOpacity)); }, [defaultOpacity]);
+
+  // Mirror defaultOpacity into a ref so loadAssetFromUrl (memoised with empty deps)
+  // can pick up the latest value without being re-created on every change.
+  const defaultOpacityRef = useRef(defaultOpacity);
+  useEffect(() => { defaultOpacityRef.current = defaultOpacity; }, [defaultOpacity]);
+
+  // ─── Fabric-ready safety net ───────────────────────────────────────
   useEffect(() => {
     if (fabricReady) return;
     if (typeof window === 'undefined') return;
@@ -162,10 +208,6 @@ export function PageEditor({
     if (!fabricLib) return;
 
     const canvas = new fabricLib.Canvas(canvasRef.current, {
-      // Transparent — paper colour + pattern are painted by the backdrop
-      // div around the canvas. Keeps the pattern on a layer Fabric can't
-      // interfere with and keeps watermark blending honest (transparent
-      // watermark shows the paper, not a flat off-white fill).
       backgroundColor: 'transparent',
       preserveObjectStacking: true,
       selection: false,
@@ -181,13 +223,6 @@ export function PageEditor({
     fabricLib.Object.prototype.rotatingPointOffset = 30;
     fabricLib.Object.prototype.borderDashArray = [4, 4];
 
-    // Bug 3 fix: forceSync — read the current active object out of
-    // Fabric and bump selTick. Calling setActiveObj with the same
-    // reference is a no-op (React bails on Object.is), but if the
-    // active object actually changed we pick that up. The selTick
-    // bump is what guarantees the controlled inputs (Position fields,
-    // Scale slider, Rotation slider, Opacity slider) reflect the
-    // mutated object properties on the next render.
     const forceSync = () => {
       const c = fabricCanvasRef.current;
       if (!c) return;
@@ -209,16 +244,12 @@ export function PageEditor({
 
     fabricCanvasRef.current = canvas;
 
-    // Bug 2 fix: snap guides on the canvas. Detach is stored so the
-    // unmount cleanup can run before canvas.dispose() (dispose also
-    // clears listeners but detach also wipes contextTop).
     detachSnapRef.current = attachSnapGuides(canvas, {
       threshold: 6,
       margin: 0.1,
       color: '#ff3da5',
     });
 
-    // Restore initial watermarks
     if (initialWatermarks?.length) {
       initialWatermarks.forEach((a) => {
         if (a.url || a.dataUrl) {
@@ -267,7 +298,6 @@ export function PageEditor({
               lockScalingFlip: true,
             });
           } else {
-            // Watermarks default to ~25% of canvas and 30% opacity.
             const maxEdge = Math.max(img.width ?? 100, img.height ?? 100);
             const scale = (EDITOR_CANVAS_WIDTH * 0.25) / maxEdge;
             img.set({
@@ -277,7 +307,7 @@ export function PageEditor({
               originY: 'center',
               scaleX: scale,
               scaleY: scale,
-              opacity: 0.3,
+              opacity: defaultOpacityRef.current,
               lockUniScaling: true,
               lockScalingFlip: true,
             });
@@ -288,10 +318,6 @@ export function PageEditor({
             mtr: true, tl: true, tr: true, bl: true, br: true,
           });
 
-          // Bug 4 fix: use FillColor white instead of stock Invert so
-          // anti-aliased edges become pure white at lower alpha rather
-          // than mid-grey. The filter is created lazily here so we can
-          // pass the live fabricLib reference.
           if (restore?.invert) {
             const f = makeFillColorFilter(fabricLib, '#ffffff');
             img.filters = f ? [f] : [];
@@ -394,14 +420,12 @@ export function PageEditor({
     const canvas = fabricCanvasRef.current;
     if (!canvas || !activeObj) return;
     activeObj.set(patch);
-    // Reset cached transform so positional changes via input fields
-    // don't desync the bounding box (fabric caches some values).
     activeObj.setCoords?.();
     canvas.renderAll();
     setSelTick((t) => t + 1);
   }
 
-  // ─── Templates (corner positions for watermarks) ───────────────────
+  // ─── Quick position ────────────────────────────────────────────────
   function applyPosition(name: 'tl' | 'tr' | 'bl' | 'br' | 'center') {
     if (assets.length === 0) {
       alert('Upload at least one watermark first.');
@@ -496,14 +520,17 @@ export function PageEditor({
         inverted: activeObj.perenneInverted ?? false,
       }
     : null;
-  // selTick is referenced here purely to participate in render — every
-  // bump forces activeValues to recompute against the (mutated) activeObj.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _ = selTick;
 
   // ─── Paper preview backdrop CSS ────────────────────────────────────
   const patternBg = buildPatternBackground(paperPattern, paperHex, paperScale);
   const paperIsDark = isPaperDark(paperHex);
+  const checkColor = paperIsDark ? '#ffffff' : '#0a0a0f';
+
+  // Page corner radius — left page of an open notebook: rounded only
+  // on the outer (left) edges; the spine side stays straight.
+  const PAGE_RADIUS = '14px 0 0 14px';
 
   return (
     <>
@@ -516,8 +543,9 @@ export function PageEditor({
       )}
 
       <div className="grid grid-cols-[260px_1fr_300px] gap-3.5 h-[calc(100vh-200px)]">
-        {/* ── LEFT PANEL: Watermarks list + Paper preview + Quick pos ─ */}
+        {/* ── LEFT PANEL ─────────────────────────────────────── */}
         <aside className="glass p-5 flex flex-col gap-6 overflow-y-auto">
+          {/* Watermarks */}
           <div>
             <SectionLabel>Page watermarks</SectionLabel>
             <Button variant="upload" onClick={() => fileInputRef.current?.click()}>
@@ -581,12 +609,39 @@ export function PageEditor({
             </div>
           </div>
 
-          {/* ── Paper preview ─────────────────────────────────────── */}
+          {/* Default opacity for new uploads */}
+          <div>
+            <SectionLabel>Default opacity</SectionLabel>
+            <div className="grid grid-cols-4 gap-1.5">
+              {[0.1, 0.2, 0.3, 0.5].map((o) => {
+                const active = Math.abs(defaultOpacity - o) < 0.005;
+                return (
+                  <button
+                    key={o}
+                    type="button"
+                    onClick={() => setDefaultOpacity(o)}
+                    className={`btn !justify-center !text-[11px] !py-2 !px-1 ${
+                      active ? '!bg-accent/15 !border-accent !text-accent' : ''
+                    }`}
+                    aria-pressed={active}
+                  >
+                    {Math.round(o * 100)}%
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[9px] text-ink-faint leading-relaxed font-mono">
+              Applied to new uploads. Per-watermark control in the right panel.
+            </p>
+          </div>
+
+          {/* Paper preview — iOS-style controls */}
           <div>
             <SectionLabel>Paper preview</SectionLabel>
 
-            {/* Paper colour swatches */}
-            <div className="grid grid-cols-4 gap-1.5 mb-3">
+            {/* — Paper colour: circles with checkmark, like iOS PaperMenu — */}
+            <div className="text-[10px] text-ink-dim font-mono mb-2 tracking-wider">paper color</div>
+            <div className="grid grid-cols-4 gap-2 mb-4">
               {PAPER_PRESETS.map((p) => {
                 const active = p.hex.toLowerCase() === paperHex.toLowerCase();
                 return (
@@ -596,77 +651,98 @@ export function PageEditor({
                     onClick={() => setPaperHex(p.hex)}
                     title={`${p.name} · ${p.hex}`}
                     aria-label={p.name}
-                    className="aspect-square rounded-lg border border-glass-border cursor-pointer transition-transform hover:scale-110 relative"
-                    style={{ background: p.hex }}
+                    aria-pressed={active}
+                    className="aspect-square rounded-full border border-glass-border cursor-pointer transition-transform hover:scale-110 relative flex items-center justify-center"
+                    // ⚠️ backgroundColor (NOT shorthand `background`) — see file header.
+                    style={{ backgroundColor: p.hex }}
                   >
                     {active && (
-                      <span
-                        className="absolute inset-[-3px] rounded-[10px] pointer-events-none border-[1.5px] border-accent"
+                      <svg
+                        className="w-3.5 h-3.5"
+                        viewBox="0 0 24 24"
+                        fill="none"
                         aria-hidden="true"
-                      />
+                      >
+                        <path
+                          d="M5 12l5 5L20 7"
+                          stroke={checkColor}
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
                     )}
                   </button>
                 );
               })}
             </div>
 
-            {/* Pattern thumbnails — built from the same builder so what you
-                see in the thumbnail matches what you see on the canvas. */}
-            <div className="grid grid-cols-4 gap-1.5 mb-3">
-              {(['BLANK', 'RULED', 'GRID', 'DOTS'] as PaperPattern[]).map((pt) => {
+            {/* — Pattern: tall page-shaped tiles, no label, like iOS — */}
+            <div className="text-[10px] text-ink-dim font-mono mb-2 tracking-wider">pattern</div>
+            <div className="grid grid-cols-4 gap-1.5 mb-4">
+              {VALID_PATTERNS.map((pt) => {
                 const active = paperPattern === pt;
-                const thumbBg = buildPatternBackground(pt, paperHex, 1);
+                // Tile pattern at scale=0.4 so several lines/dots fit
+                // inside the small thumb without feeling sparse.
+                const thumbBg = buildPatternBackground(pt, paperHex, 0.4);
                 return (
                   <button
                     key={pt}
                     type="button"
                     onClick={() => setPaperPattern(pt)}
+                    title={pt}
                     aria-label={pt}
                     aria-pressed={active}
-                    className={`aspect-square rounded-lg border cursor-pointer transition relative overflow-hidden ${
+                    className={`rounded-md cursor-pointer transition relative overflow-hidden ${
                       active
-                        ? 'border-accent ring-1 ring-accent/40'
-                        : 'border-glass-border hover:border-glass-hairline'
+                        ? 'ring-2 ring-accent ring-offset-0'
+                        : 'border border-glass-border hover:border-glass-hairline'
                     }`}
+                    // Page-shaped aspect (slightly taller than wide). 0.725 matches the
+                    // notebook's physical page ratio.
                     style={{
-                      background: paperHex,
+                      aspectRatio: '0.725',
+                      backgroundColor: paperHex,
                       backgroundImage: thumbBg.backgroundImage,
                       backgroundSize: thumbBg.backgroundSize,
                       backgroundRepeat: thumbBg.backgroundRepeat,
                     }}
+                  />
+                );
+              })}
+            </div>
+
+            {/* — Pattern size: 3 buttons, matches iOS PaperMenu exactly — */}
+            <div className="text-[10px] text-ink-dim font-mono mb-2 tracking-wider">pattern size</div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[1.0, 1.5, 2.0].map((s) => {
+                const active = Math.abs(paperScale - s) < 0.01;
+                const disabled = paperPattern === 'BLANK';
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setPaperScale(s)}
+                    disabled={disabled}
+                    aria-pressed={active}
+                    className={`btn !justify-center !text-[11px] !py-2 ${
+                      active && !disabled
+                        ? '!bg-accent/15 !border-accent !text-accent'
+                        : ''
+                    } disabled:opacity-40 disabled:cursor-not-allowed`}
                   >
-                    <span
-                      className="absolute bottom-0 inset-x-0 text-center text-[8px] font-mono py-0.5 backdrop-blur-sm"
-                      style={{
-                        color: paperIsDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.65)',
-                        background: paperIsDark ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.55)',
-                      }}
-                    >
-                      {pt}
-                    </span>
+                    {Math.round(s * 100)}%
                   </button>
                 );
               })}
             </div>
 
-            {/* Pattern scale slider — only meaningful for non-BLANK */}
-            <Slider
-              label="Pattern scale"
-              displayValue={`${Math.round(paperScale * 100)}%`}
-              min={50}
-              max={200}
-              step={5}
-              value={Math.round(paperScale * 100)}
-              onChange={(e) => setPaperScale(Number(e.target.value) / 100)}
-              disabled={paperPattern === 'BLANK'}
-            />
-
-            <p className="mt-2 text-[9px] text-ink-faint leading-relaxed font-mono">
+            <p className="mt-3 text-[9px] text-ink-faint leading-relaxed font-mono">
               Local preview only — not saved with the notebook.
             </p>
           </div>
 
-          {/* ── Quick position ────────────────────────────────────── */}
+          {/* Quick position */}
           <div>
             <SectionLabel>Quick position</SectionLabel>
             <div className="grid grid-cols-3 gap-1.5">
@@ -685,24 +761,22 @@ export function PageEditor({
           <div
             className="overflow-hidden"
             style={{
-              borderRadius: `${EDITOR_CORNER_RADIUS}px`,
+              borderRadius: PAGE_RADIUS,
               filter:
                 'drop-shadow(0 40px 80px rgba(0,0,0,0.35)) drop-shadow(0 12px 24px rgba(0,0,0,0.25))',
-              boxShadow:
-                'inset 0 0 0 1px rgba(0,0,0,0.08)',
+              boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.08)',
             }}
           >
-            {/* Paper backdrop — supplies colour + pattern under the
-                Fabric canvas (which itself is transparent). Fabric wraps
-                our canvas in a div.canvas-container during init; that
-                container ends up nested inside this backdrop, which is
-                fine because canvas-container sizes itself to the canvas
-                element's width/height. */}
+            {/* Paper backdrop — paints colour + pattern under the
+                transparent Fabric canvas. Use `backgroundColor` (NOT
+                the `background` shorthand) so changing the colour
+                doesn't reset backgroundImage to none and silently kill
+                the pattern on the next render. */}
             <div
               style={{
                 width: EDITOR_CANVAS_WIDTH,
                 height: EDITOR_CANVAS_HEIGHT,
-                background: paperHex,
+                backgroundColor: paperHex,
                 backgroundImage: patternBg.backgroundImage,
                 backgroundSize: patternBg.backgroundSize,
                 backgroundRepeat: patternBg.backgroundRepeat,
@@ -716,12 +790,17 @@ export function PageEditor({
               />
             </div>
           </div>
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 font-mono text-[10px] tracking-[0.1em] text-ink-faint py-1.5 px-3.5 bg-black/30 backdrop-blur border border-glass-border rounded-full">
+
+          {/* Caption pill — bumped contrast (white on darker pill) so
+              it reads in both themes. v21 used text-ink-faint which
+              became invisible on light theme over a dark-translucent
+              pill. */}
+          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 font-mono text-[10px] tracking-[0.1em] text-white/85 py-1.5 px-3.5 bg-black/55 backdrop-blur border border-white/10 rounded-full whitespace-nowrap">
             single page · 725×1000 ratio · applies to all pages except &ldquo;Property of&rdquo;
           </div>
         </main>
 
-        {/* ── RIGHT PANEL: Selection properties ─────────────── */}
+        {/* ── RIGHT PANEL ─────────────────────────────────────── */}
         <aside className="glass p-5 flex flex-col gap-6 overflow-y-auto">
           <div>
             <SectionLabel>Selection</SectionLabel>
@@ -758,7 +837,6 @@ export function PageEditor({
                   </div>
                 </div>
 
-                {/* Bug 3 fix: range extended 1–500% */}
                 <Slider
                   label="Scale"
                   displayValue={`${activeValues.scalePct}%`}
