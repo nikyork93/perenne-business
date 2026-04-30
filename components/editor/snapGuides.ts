@@ -171,36 +171,22 @@ export function attachSnapGuides(
 // ─── Fill-color filter ───────────────────────────────────────────────
 
 /**
- * Convert "#rrggbb" → { r,g,b } in 0..1 (for WebGL uniforms).
- */
-function hexToRgbNorm(hex: string): { r: number; g: number; b: number } {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return { r: 1, g: 1, b: 1 };
-  const v = parseInt(m[1], 16);
-  return {
-    r: ((v >> 16) & 0xff) / 255,
-    g: ((v >> 8) & 0xff) / 255,
-    b: (v & 0xff) / 255,
-  };
-}
-
-/**
- * Convert "#rrggbb" → { r,g,b } in 0..255 (for 2D ImageData fallback).
- */
-function hexToRgb255(hex: string): { r: number; g: number; b: number } {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return { r: 255, g: 255, b: 255 };
-  const v = parseInt(m[1], 16);
-  return {
-    r: (v >> 16) & 0xff,
-    g: (v >> 8) & 0xff,
-    b: v & 0xff,
-  };
-}
-
-/**
  * Build a Fabric image filter that re-paints every non-transparent pixel
- * with the given hex color, preserving alpha.
+ * with the given hex color, preserving the original alpha.
+ *
+ * Implemented by delegating to Fabric's built-in `BlendColor` filter in
+ * 'tint' mode with alpha=1. The math (from Fabric's BlendColor source):
+ *   out.rgb = source.rgb * alpha + image.rgb * (1 - alpha)
+ * With alpha=1 this collapses to `out.rgb = source.rgb` for every pixel,
+ * with the image alpha preserved as-is — exactly the behaviour we want
+ * for "invert to pure white" without grey anti-alias edges.
+ *
+ * Why not a custom filter: an earlier revision rolled its own filter
+ * via `fabric.util.createClass(filters.BaseFilter, …)` with a custom
+ * fragment shader. That kept failing silently in production builds —
+ * suspected cause is that the WebGL backend caches compiled shaders by
+ * `type` string and a custom non-registered filter doesn't always get a
+ * working program. Using a built-in is dependency-free.
  *
  * Usage:
  *   img.filters = [makeFillColorFilter(fabricLib, '#ffffff')];
@@ -208,76 +194,15 @@ function hexToRgb255(hex: string): { r: number; g: number; b: number } {
  *   canvas.renderAll();
  */
 export function makeFillColorFilter(fabricLib: any, hex: string): any {
-  if (!fabricLib?.Image?.filters?.BaseFilter || !fabricLib?.util?.createClass) {
-    // Defensive fallback — if Fabric isn't loaded yet or has no filters API,
-    // return null and let the caller fall back to no filter.
-    // Cover/PageEditor only call this with fabricReady === true so this path
-    // is unreachable in practice.
+  const Filters = fabricLib?.Image?.filters;
+  if (!Filters?.BlendColor) {
     // eslint-disable-next-line no-console
-    console.warn('[makeFillColorFilter] Fabric filters API not available');
+    console.warn('[makeFillColorFilter] Fabric BlendColor not available');
     return null;
   }
-
-  const filters = fabricLib.Image.filters;
-
-  const FillColor = fabricLib.util.createClass(filters.BaseFilter, {
-    type: 'PerenneFillColor',
-
-    fragmentSource: [
-      'precision highp float;',
-      'uniform sampler2D uTexture;',
-      'uniform vec3 uColor;',
-      'varying vec2 vTexCoord;',
-      'void main() {',
-      '  vec4 c = texture2D(uTexture, vTexCoord);',
-      '  gl_FragColor = vec4(uColor, c.a);',
-      '}',
-    ].join('\n'),
-
-    // Default — overridden by constructor argument
-    color: '#ffffff',
-
-    // Used by Fabric when it auto-detects which uniforms to compile
-    mainParameter: 'color',
-
-    /**
-     * @param {WebGLRenderingContext} gl
-     * @param {WebGLProgram} program
-     */
-    getUniformLocations(gl: WebGLRenderingContext, program: WebGLProgram) {
-      return {
-        uColor: gl.getUniformLocation(program, 'uColor'),
-      };
-    },
-
-    /**
-     * @param {WebGLRenderingContext} gl
-     * @param {{ uColor: WebGLUniformLocation }} uniformLocations
-     */
-    sendUniformData(
-      gl: WebGLRenderingContext,
-      uniformLocations: { uColor: WebGLUniformLocation }
-    ) {
-      const c = hexToRgbNorm(this.color);
-      gl.uniform3f(uniformLocations.uColor, c.r, c.g, c.b);
-    },
-
-    /**
-     * 2D fallback for when WebGL filtering is unavailable.
-     * Replaces RGB on every pixel; alpha is left untouched.
-     * Skips fully-transparent pixels as a micro-optimisation.
-     */
-    applyTo2d(options: { imageData: ImageData }) {
-      const data = options.imageData.data;
-      const c = hexToRgb255(this.color);
-      for (let i = 0; i < data.length; i += 4) {
-        if (data[i + 3] === 0) continue;
-        data[i] = c.r;
-        data[i + 1] = c.g;
-        data[i + 2] = c.b;
-      }
-    },
+  return new Filters.BlendColor({
+    color: hex,
+    mode: 'tint',
+    alpha: 1,
   });
-
-  return new FillColor({ color: hex });
 }

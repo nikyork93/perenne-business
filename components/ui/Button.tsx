@@ -42,9 +42,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         variant === 'ghost' && [
           'text-ink-dim hover:text-ink hover:bg-white/[0.04]',
         ],
+        // Light theme: red-700 text on red-50 bg with red-300 border — strong contrast.
+        // Dark theme: red-300 text on red-400/10 bg with red-400/30 border — soft glow.
         variant === 'danger' && [
-          'border border-red-400/30 bg-red-400/10 text-red-200',
-          'hover:bg-red-400/20 hover:border-red-400/50 hover:-translate-y-px',
+          'border border-red-300 bg-red-50 text-red-700',
+          'hover:bg-red-100 hover:border-red-400 hover:-translate-y-px',
+          'dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-300',
+          'dark:hover:bg-red-400/20 dark:hover:border-red-400/50',
         ],
 
         // block

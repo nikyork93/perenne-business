@@ -12,6 +12,7 @@ import {
   type CoverAssetRef,
 } from '@/types/cover';
 import { attachSnapGuides, makeFillColorFilter } from './snapGuides';
+import { isPaperDark } from './paperPresets';
 
 // Fabric.js loaded from CDN via <Script>; declare global type
 declare global {
@@ -33,6 +34,7 @@ interface FabricImageLike {
   perenneAssetId?: number;
   perenneAssetName?: string;
   perenneInverted?: boolean;
+  perenneAutoAdapt?: boolean;
   filters?: unknown[];
   applyFilters?: () => void;
   setControlsVisibility?: (visibility: Record<string, boolean>) => void;
@@ -45,6 +47,7 @@ interface AssetEntry {
   dataUrl: string;
   url?: string;
   inverted?: boolean;
+  autoAdapt?: boolean;
   fabricObj: FabricImageLike;
 }
 
@@ -418,32 +421,115 @@ export function CoverEditor({
     });
   }
 
-  // Bug 4 fix: toggle invert via FillColor white filter
+  // ─── Filter helpers ────────────────────────────────────────────────
+  // setInvertedState writes the desired inverted flag onto a fabric
+  // image AND re-applies the underlying BlendColor white filter so the
+  // canvas reflects the change immediately. Pure operation on the
+  // fabric object — does NOT touch React state. The caller owns syncing
+  // the state; this just changes pixels.
+  function setInvertedState(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    img: any,
+    inverted: boolean
+  ) {
+    const fabricLib = window.fabric;
+    if (!fabricLib) return;
+    img.perenneInverted = inverted;
+    if (inverted) {
+      const f = makeFillColorFilter(fabricLib, '#ffffff');
+      img.filters = f ? [f] : [];
+    } else {
+      img.filters = [];
+    }
+    img.applyFilters?.();
+  }
+
+  // Manual invert toggle. Mutually exclusive with auto-adapt — clicking
+  // here always exits auto-adapt mode and takes manual control.
   function toggleInvert() {
     const canvas = fabricCanvasRef.current;
-    const fabricLib = window.fabric;
-    if (!canvas || !fabricLib || !activeObj) return;
+    if (!canvas || !activeObj) return;
 
-    const isInverted = !activeObj.perenneInverted;
-    activeObj.perenneInverted = isInverted;
-
-    if (isInverted) {
-      const f = makeFillColorFilter(fabricLib, '#ffffff');
-      activeObj.filters = f ? [f] : [];
-    } else {
-      activeObj.filters = [];
-    }
-    activeObj.applyFilters?.();
+    const newInverted = !activeObj.perenneInverted;
+    activeObj.perenneAutoAdapt = false;
+    setInvertedState(activeObj, newInverted);
     canvas.renderAll();
 
-    // Sync to assets array
     setAssets((prev) =>
       prev.map((a) =>
-        a.id === activeObj.perenneAssetId ? { ...a, inverted: isInverted } : a
+        a.id === activeObj.perenneAssetId
+          ? { ...a, inverted: newInverted, autoAdapt: false }
+          : a
       )
     );
     setSelTick((t) => t + 1);
   }
+
+  // Auto-adapt toggle. When enabling, immediately compute the correct
+  // inverted state from the current cover background colour and apply
+  // it. Future changes to bgColor are picked up by the useEffect below.
+  // When disabling, keep the last-applied inverted state — user can
+  // then toggle Invert manually from there.
+  function toggleAutoAdapt() {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !activeObj) return;
+
+    const newAuto = !activeObj.perenneAutoAdapt;
+    activeObj.perenneAutoAdapt = newAuto;
+
+    let nextInverted = activeObj.perenneInverted ?? false;
+    if (newAuto) {
+      nextInverted = isPaperDark(bgColor);
+      setInvertedState(activeObj, nextInverted);
+    }
+    canvas.renderAll();
+
+    setAssets((prev) =>
+      prev.map((a) =>
+        a.id === activeObj.perenneAssetId
+          ? { ...a, autoAdapt: newAuto, inverted: nextInverted }
+          : a
+      )
+    );
+    setSelTick((t) => t + 1);
+  }
+
+  // When the cover background colour changes, walk every asset that has
+  // auto-adapt enabled and re-apply the matching inverted state.
+  // Bg image is intentionally NOT analysed — too unreliable to compute
+  // an accurate luminance from arbitrary uploaded images. Document this
+  // in the UI hint so the user knows to take manual control with bg
+  // images.
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const targetInverted = isPaperDark(bgColor);
+    let mutated = false;
+
+    assets.forEach((a) => {
+      if (!a.autoAdapt) return;
+      if ((a.fabricObj.perenneInverted ?? false) === targetInverted) return;
+      setInvertedState(a.fabricObj, targetInverted);
+      mutated = true;
+    });
+
+    if (mutated) {
+      canvas.renderAll();
+      // Mirror new inverted flags into React state so the right-panel
+      // controls show the correct active state for the active asset.
+      setAssets((prev) =>
+        prev.map((a) =>
+          a.autoAdapt ? { ...a, inverted: targetInverted } : a
+        )
+      );
+      setSelTick((t) => t + 1);
+    }
+    // assets is intentionally excluded — we read it via the closure but
+    // we don't want to re-run on every assets change (which would loop
+    // forever since this very effect mutates assets via setAssets).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgColor]);
 
   // ─── Property editors ──────────────────────────────────────────────
   function updateActive(patch: Record<string, number>) {
@@ -562,6 +648,7 @@ export function CoverEditor({
         opacityPct: Math.round((activeObj.opacity ?? 1) * 100),
         name: activeObj.perenneAssetName || 'Object',
         inverted: activeObj.perenneInverted ?? false,
+        autoAdapt: activeObj.perenneAutoAdapt ?? false,
       }
     : null;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -799,21 +886,51 @@ export function CoverEditor({
                   onChange={(e) => updateActive({ opacity: Number(e.target.value) / 100 })}
                 />
 
-                {/* Invert color toggle — FillColor white filter */}
-                <button
-                  type="button"
-                  onClick={toggleInvert}
-                  className={`btn !w-full !justify-center transition ${
-                    activeValues.inverted
-                      ? 'bg-accent/15 border-accent/40 text-accent'
-                      : ''
-                  }`}
-                >
-                  <span>
-                    {activeValues.inverted ? '✓ Inverted' : 'Invert color'}
-                  </span>
-                  <span className="ml-2 text-[10px] text-ink-faint">B ↔ W</span>
-                </button>
+                {/* B↔W controls — manual Invert + Auto-adapt are mutually
+                    exclusive: clicking either takes priority and switches the
+                    other off. The visible "active" highlight always reflects
+                    the *currently dominant* mode. */}
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={toggleInvert}
+                    className={`btn !w-full !justify-center transition ${
+                      activeValues.inverted && !activeValues.autoAdapt
+                        ? 'bg-accent/15 border-accent/40 text-accent'
+                        : ''
+                    }`}
+                  >
+                    <span>
+                      {activeValues.inverted && !activeValues.autoAdapt
+                        ? '✓ Inverted'
+                        : 'Invert color'}
+                    </span>
+                    <span className="ml-2 text-[10px] text-ink-faint">B ↔ W</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={toggleAutoAdapt}
+                    className={`btn !w-full !justify-center transition ${
+                      activeValues.autoAdapt
+                        ? 'bg-accent/15 border-accent/40 text-accent'
+                        : ''
+                    }`}
+                    title="Logo turns white on dark cover, original on light cover"
+                  >
+                    <span>
+                      {activeValues.autoAdapt ? '✓ Auto B ↔ W' : 'Auto B ↔ W'}
+                    </span>
+                    <span className="ml-2 text-[10px] text-ink-faint">follows cover</span>
+                  </button>
+
+                  {activeValues.autoAdapt && bgImageUrl && (
+                    <p className="text-[9px] text-ink-faint leading-relaxed font-mono">
+                      Auto-adapt follows the cover colour. Background images
+                      are not analysed — invert manually if needed.
+                    </p>
+                  )}
+                </div>
 
                 <Button
                   variant="danger"
