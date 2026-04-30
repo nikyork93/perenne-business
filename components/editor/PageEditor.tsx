@@ -430,7 +430,13 @@ export function PageEditor({
     if (!canvas || !activeObj) return;
     activeObj.set(patch);
     activeObj.setCoords?.();
-    canvas.renderAll();
+    // requestRenderAll (RAF-coalesced) instead of renderAll (sync).
+    // For slider drags firing 60+ events/sec, sync renderAll did
+    // technically run each tick, but some browsers postponed the paint
+    // until idle, making the canvas look frozen during drag. RAF
+    // schedules the render at a paint boundary, which browsers honour
+    // predictably — visible live updates.
+    canvas.requestRenderAll();
     setSelTick((t) => t + 1);
   }
 
@@ -857,8 +863,8 @@ export function PageEditor({
                   min={1}
                   max={500}
                   value={activeValues.scalePct}
-                  onChange={(e) => {
-                    const s = Number(e.target.value) / 100;
+                  onInput={(e) => {
+                    const s = Number((e.target as HTMLInputElement).value) / 100;
                     updateActive({ scaleX: s, scaleY: s });
                   }}
                 />
@@ -868,7 +874,9 @@ export function PageEditor({
                   min={-180}
                   max={180}
                   value={activeValues.rotation}
-                  onChange={(e) => updateActive({ angle: Number(e.target.value) })}
+                  onInput={(e) =>
+                    updateActive({ angle: Number((e.target as HTMLInputElement).value) })
+                  }
                 />
                 <Slider
                   label="Opacity"
@@ -876,7 +884,11 @@ export function PageEditor({
                   min={0}
                   max={100}
                   value={activeValues.opacityPct}
-                  onChange={(e) => updateActive({ opacity: Number(e.target.value) / 100 })}
+                  onInput={(e) =>
+                    updateActive({
+                      opacity: Number((e.target as HTMLInputElement).value) / 100,
+                    })
+                  }
                 />
 
                 <button

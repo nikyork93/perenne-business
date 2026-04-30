@@ -28,10 +28,51 @@ export function EditorClient({ initialConfig }: Props) {
   const [flash, setFlash] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
 
   // ─── API helpers ───────────────────────────────────────────────────
+  // Both save flows share the same response-handling pattern:
+  //
+  //   1. fetch — catches connectivity errors (DNS, timeout, CORS, etc)
+  //   2. content-type check — detects when the server returned HTML
+  //      (a Next.js 404/500 error page) instead of JSON. Without this
+  //      check, res.json() throws a SyntaxError and we mislabel the
+  //      failure as "Network error".
+  //   3. JSON parse — catches truly malformed JSON
+  //   4. res.ok — surfaces the server's `{ error }` body for non-2xx
+  //
+  // Every failure path also logs to the console with the raw response
+  // text so a curious user can hand-deliver the cause when reporting.
+
+  async function readJsonOrFail(
+    res: Response,
+    label: string
+  ): Promise<{ ok: true; data: { config?: { version?: number }; error?: string; warnings?: string[] } } | { ok: false; msg: string }> {
+    const ct = res.headers.get('content-type') ?? '';
+    if (!ct.includes('application/json')) {
+      const text = await res.text().catch(() => '');
+      console.error(`[${label}] non-JSON response`, {
+        status: res.status,
+        statusText: res.statusText,
+        contentType: ct,
+        bodyPreview: text.slice(0, 500),
+      });
+      return {
+        ok: false,
+        msg: `Server returned ${res.status} ${res.statusText} (not JSON). See console for details.`,
+      };
+    }
+    try {
+      const data = await res.json();
+      return { ok: true, data };
+    } catch (err) {
+      console.error(`[${label}] JSON parse failed`, err);
+      return { ok: false, msg: 'Server returned invalid JSON. See console for details.' };
+    }
+  }
+
   async function saveCover(coverConfig: CoverConfigData) {
     setFlash(null);
+    let res: Response;
     try {
-      const res = await fetch('/api/cover', {
+      res = await fetch('/api/cover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -41,27 +82,39 @@ export function EditorClient({ initialConfig }: Props) {
           cover: coverConfig.cover,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setFlash({ type: 'err', msg: data.error ?? 'Save failed.' });
-        return;
-      }
-      const warn = data.warnings?.join(' · ');
-      setFlash({
-        type: 'ok',
-        msg: warn
-          ? `Cover saved. Warning: ${warn}`
-          : `Cover saved as version ${data.config?.version ?? '—'}.`,
-      });
-    } catch {
-      setFlash({ type: 'err', msg: 'Network error. Please retry.' });
+    } catch (err) {
+      console.error('[saveCover] fetch failed', err);
+      const msg = err instanceof Error ? err.message : 'unreachable';
+      setFlash({ type: 'err', msg: `Network error: ${msg}. Please retry.` });
+      return;
     }
+
+    const parsed = await readJsonOrFail(res, 'saveCover');
+    if (!parsed.ok) {
+      setFlash({ type: 'err', msg: parsed.msg });
+      return;
+    }
+    const { data } = parsed;
+
+    if (!res.ok) {
+      setFlash({ type: 'err', msg: data.error ?? `Save failed (HTTP ${res.status}).` });
+      return;
+    }
+
+    const warn = data.warnings?.join(' · ');
+    setFlash({
+      type: 'ok',
+      msg: warn
+        ? `Cover saved. Warning: ${warn}`
+        : `Cover saved as version ${data.config?.version ?? '—'}.`,
+    });
   }
 
   async function saveWatermarks(watermarks: CoverAssetRef[]) {
     setFlash(null);
+    let res: Response;
     try {
-      const res = await fetch('/api/cover', {
+      res = await fetch('/api/cover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -69,21 +122,32 @@ export function EditorClient({ initialConfig }: Props) {
           pageWatermarks: watermarks,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setFlash({ type: 'err', msg: data.error ?? 'Save failed.' });
-        return;
-      }
-      const warn = data.warnings?.join(' · ');
-      setFlash({
-        type: 'ok',
-        msg: warn
-          ? `Watermarks saved. Warning: ${warn}`
-          : `Watermarks saved as version ${data.config?.version ?? '—'}.`,
-      });
-    } catch {
-      setFlash({ type: 'err', msg: 'Network error. Please retry.' });
+    } catch (err) {
+      console.error('[saveWatermarks] fetch failed', err);
+      const msg = err instanceof Error ? err.message : 'unreachable';
+      setFlash({ type: 'err', msg: `Network error: ${msg}. Please retry.` });
+      return;
     }
+
+    const parsed = await readJsonOrFail(res, 'saveWatermarks');
+    if (!parsed.ok) {
+      setFlash({ type: 'err', msg: parsed.msg });
+      return;
+    }
+    const { data } = parsed;
+
+    if (!res.ok) {
+      setFlash({ type: 'err', msg: data.error ?? `Save failed (HTTP ${res.status}).` });
+      return;
+    }
+
+    const warn = data.warnings?.join(' · ');
+    setFlash({
+      type: 'ok',
+      msg: warn
+        ? `Watermarks saved. Warning: ${warn}`
+        : `Watermarks saved as version ${data.config?.version ?? '—'}.`,
+    });
   }
 
   async function uploadFile(
@@ -95,10 +159,30 @@ export function EditorClient({ initialConfig }: Props) {
       fd.append('file', file);
       fd.append('kind', kind);
       const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      // For uploads, surface failures so the user knows the file is
+      // sitting in memory only (data URL) and won't survive a refresh.
+      // Don't toast here — the calling editor renders the asset
+      // optimistically via dataURL and this just decorates it with
+      // the persistent URL. We log a warning if the server didn't
+      // give us one.
+      if (!res.ok) {
+        console.warn('[uploadFile] non-OK response', { kind, status: res.status });
+        return null;
+      }
+      const ct = res.headers.get('content-type') ?? '';
+      if (!ct.includes('application/json')) {
+        const text = await res.text().catch(() => '');
+        console.warn('[uploadFile] non-JSON response', { kind, status: res.status, bodyPreview: text.slice(0, 300) });
+        return null;
+      }
       const data = await res.json();
-      if (!res.ok || !data.url) return null;
+      if (!data.url) {
+        console.warn('[uploadFile] response missing url', { kind, data });
+        return null;
+      }
       return { url: data.url };
-    } catch {
+    } catch (err) {
+      console.warn('[uploadFile] fetch failed', { kind, err });
       return null;
     }
   }

@@ -658,7 +658,10 @@ export function CoverEditor({
     if (!canvas || !activeObj) return;
     activeObj.set(patch);
     activeObj.setCoords?.();
-    canvas.renderAll();
+    // requestRenderAll (RAF-coalesced) instead of renderAll. See
+    // PageEditor for the rationale — slider drags need RAF-scheduled
+    // renders to be reliably visible during drag.
+    canvas.requestRenderAll();
     setSelTick((t) => t + 1);
   }
 
@@ -1024,8 +1027,8 @@ export function CoverEditor({
                   min={1}
                   max={500}
                   value={activeValues.scalePct}
-                  onChange={(e) => {
-                    const s = Number(e.target.value) / 100;
+                  onInput={(e) => {
+                    const s = Number((e.target as HTMLInputElement).value) / 100;
                     updateActive({ scaleX: s, scaleY: s });
                   }}
                 />
@@ -1035,7 +1038,9 @@ export function CoverEditor({
                   min={-180}
                   max={180}
                   value={activeValues.rotation}
-                  onChange={(e) => updateActive({ angle: Number(e.target.value) })}
+                  onInput={(e) =>
+                    updateActive({ angle: Number((e.target as HTMLInputElement).value) })
+                  }
                 />
                 <Slider
                   label="Opacity"
@@ -1043,7 +1048,11 @@ export function CoverEditor({
                   min={0}
                   max={100}
                   value={activeValues.opacityPct}
-                  onChange={(e) => updateActive({ opacity: Number(e.target.value) / 100 })}
+                  onInput={(e) =>
+                    updateActive({
+                      opacity: Number((e.target as HTMLInputElement).value) / 100,
+                    })
+                  }
                 />
 
                 {/* B↔W controls — manual Invert + Auto-adapt are mutually
