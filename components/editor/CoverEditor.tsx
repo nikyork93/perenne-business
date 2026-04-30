@@ -11,6 +11,7 @@ import {
   type CoverConfigData,
   type CoverAssetRef,
 } from '@/types/cover';
+import { attachSnapGuides, makeFillColorFilter } from './snapGuides';
 
 // Fabric.js loaded from CDN via <Script>; declare global type
 declare global {
@@ -54,6 +55,20 @@ interface CoverEditorProps {
   onBackgroundUpload?: (file: File) => Promise<{ url: string } | null>;
 }
 
+/**
+ * CoverEditor — design the front cover of the notebook.
+ *
+ * Cover has its own background (solid colour or uploaded image), so unlike
+ * PageEditor it does NOT use a paper-preview backdrop.
+ *
+ * v21 fixes:
+ *   1. Fabric tab-switch white-rect — useState initialiser checks
+ *      window.fabric so the canvas re-mounts immediately on tab change.
+ *   2. Snap guides — center H/V + 10% margins, magenta dashed.
+ *   3. Live slider sync — forceSync handler on object:scaling/moving/
+ *      rotating/modified, scale slider extended to 1–500%.
+ *   4. True-white invert — custom FillColor filter replaces stock Invert.
+ */
 export function CoverEditor({
   initialConfig,
   onSave,
@@ -66,8 +81,20 @@ export function CoverEditor({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgFileInputRef = useRef<HTMLInputElement>(null);
   const nextIdRef = useRef(1);
+  const detachSnapRef = useRef<(() => void) | null>(null);
 
-  const [fabricReady, setFabricReady] = useState(false);
+  /**
+   * Bug 1 fix — see PageEditor for the full rationale. tl;dr Next.js
+   * <Script> dedupes by URL and onLoad does not refire on remount, so
+   * a tab switch (Cover → Pages → Cover) leaves fabricReady stuck on
+   * `false` without this initialiser.
+   */
+  const [fabricReady, setFabricReady] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return !!(window as any).fabric;
+  });
+
   const [bgColor, setBgColor] = useState(
     initialConfig?.cover.backgroundColor ?? DEFAULT_COVER_CONFIG.cover.backgroundColor
   );
@@ -80,6 +107,32 @@ export function CoverEditor({
   const [selTick, setSelTick] = useState(0);
   const [saving, setSaving] = useState(false);
   const [bgUploading, setBgUploading] = useState(false);
+
+  // ─── Safety net for fabricReady ────────────────────────────────────
+  // Catches the rare race where this component mounts while the Fabric
+  // <Script> from a previous mount is still in-flight. Polls briefly
+  // and stops itself the moment fabric is available, or after 5s.
+  useEffect(() => {
+    if (fabricReady) return;
+    if (typeof window === 'undefined') return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((window as any).fabric) {
+      setFabricReady(true);
+      return;
+    }
+    const id = window.setInterval(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((window as any).fabric) {
+        setFabricReady(true);
+        window.clearInterval(id);
+      }
+    }, 50);
+    const timeout = window.setTimeout(() => window.clearInterval(id), 5000);
+    return () => {
+      window.clearInterval(id);
+      window.clearTimeout(timeout);
+    };
+  }, [fabricReady]);
 
   // ─── Initialize Fabric canvas ──────────────────────────────────────
   useEffect(() => {
@@ -95,7 +148,7 @@ export function CoverEditor({
       selection: false,
     });
 
-    // Selection visuals — use teal accent now (was gold)
+    // Selection visuals — teal accent
     fabricLib.Object.prototype.transparentCorners = false;
     fabricLib.Object.prototype.cornerColor = '#4a7a8c';
     fabricLib.Object.prototype.cornerStyle = 'circle';
@@ -106,7 +159,16 @@ export function CoverEditor({
     fabricLib.Object.prototype.rotatingPointOffset = 30;
     fabricLib.Object.prototype.borderDashArray = [4, 4];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // Bug 3 fix: forceSync — re-read the active object out of Fabric and
+    // bump selTick so the selection-properties panel re-renders against
+    // the (mutated) object during corner-drag scaling.
+    const forceSync = () => {
+      const c = fabricCanvasRef.current;
+      if (!c) return;
+      setActiveObj((prev) => c.getActiveObject() ?? prev);
+      setSelTick((t) => t + 1);
+    };
+
     const onSelect = () => {
       setActiveObj(canvas.getActiveObject());
       setSelTick((t) => t + 1);
@@ -114,12 +176,19 @@ export function CoverEditor({
     canvas.on('selection:created', onSelect);
     canvas.on('selection:updated', onSelect);
     canvas.on('selection:cleared', () => setActiveObj(null));
-    canvas.on('object:modified', () => setSelTick((t) => t + 1));
-    canvas.on('object:moving', () => setSelTick((t) => t + 1));
-    canvas.on('object:scaling', () => setSelTick((t) => t + 1));
-    canvas.on('object:rotating', () => setSelTick((t) => t + 1));
+    canvas.on('object:modified', forceSync);
+    canvas.on('object:moving', forceSync);
+    canvas.on('object:scaling', forceSync);
+    canvas.on('object:rotating', forceSync);
 
     fabricCanvasRef.current = canvas;
+
+    // Bug 2 fix: snap guides
+    detachSnapRef.current = attachSnapGuides(canvas, {
+      threshold: 6,
+      margin: 0.1,
+      color: '#ff3da5',
+    });
 
     // Restore initial bg image if present
     if (initialConfig?.cover.backgroundImageUrl) {
@@ -136,6 +205,8 @@ export function CoverEditor({
     }
 
     return () => {
+      detachSnapRef.current?.();
+      detachSnapRef.current = null;
       canvas.dispose();
       fabricCanvasRef.current = null;
     };
@@ -260,23 +331,24 @@ export function CoverEditor({
             });
           }
 
-          // ⭐ Disable middle handles — prevent stretching, allow only corner uniform scale
+          // ⭐ Disable middle handles — corners only, uniform scale
           img.setControlsVisibility({
-            mt: false, // middle top
-            mb: false, // middle bottom
-            ml: false, // middle left
-            mr: false, // middle right
-            mtr: true, // top rotate
+            mt: false,
+            mb: false,
+            ml: false,
+            mr: false,
+            mtr: true,
             tl: true,
             tr: true,
             bl: true,
             br: true,
           });
 
-          // Apply invert filter on restore if needed
+          // Bug 4 fix: use FillColor white instead of stock Invert.
           if (restore?.invert) {
-            img.filters = [new fabricLib.Image.filters.Invert()];
-            img.applyFilters();
+            const f = makeFillColorFilter(fabricLib, '#ffffff');
+            img.filters = f ? [f] : [];
+            img.applyFilters?.();
           }
 
           canvas.add(img);
@@ -346,7 +418,7 @@ export function CoverEditor({
     });
   }
 
-  // ⭐ Toggle invert filter on the active logo
+  // Bug 4 fix: toggle invert via FillColor white filter
   function toggleInvert() {
     const canvas = fabricCanvasRef.current;
     const fabricLib = window.fabric;
@@ -356,11 +428,12 @@ export function CoverEditor({
     activeObj.perenneInverted = isInverted;
 
     if (isInverted) {
-      activeObj.filters = [new fabricLib.Image.filters.Invert()];
+      const f = makeFillColorFilter(fabricLib, '#ffffff');
+      activeObj.filters = f ? [f] : [];
     } else {
       activeObj.filters = [];
     }
-    activeObj.applyFilters();
+    activeObj.applyFilters?.();
     canvas.renderAll();
 
     // Sync to assets array
@@ -377,6 +450,7 @@ export function CoverEditor({
     const canvas = fabricCanvasRef.current;
     if (!canvas || !activeObj) return;
     activeObj.set(patch);
+    activeObj.setCoords?.();
     canvas.renderAll();
     setSelTick((t) => t + 1);
   }
@@ -391,11 +465,12 @@ export function CoverEditor({
     if (!canvas) return;
     const primary = assets[0].fabricObj;
     const setup: Record<string, Record<string, number>> = {
-      minimal: { left: EDITOR_CANVAS_WIDTH / 2, top: EDITOR_CANVAS_HEIGHT / 2, scaleX: 0.35, scaleY: 0.35, angle: 0, opacity: 1 },
+      minimal:   { left: EDITOR_CANVAS_WIDTH / 2,    top: EDITOR_CANVAS_HEIGHT / 2,    scaleX: 0.35, scaleY: 0.35, angle: 0, opacity: 1 },
       corporate: { left: EDITOR_CANVAS_WIDTH * 0.25, top: EDITOR_CANVAS_HEIGHT * 0.18, scaleX: 0.30, scaleY: 0.30, angle: 0, opacity: 1 },
-      bold: { left: EDITOR_CANVAS_WIDTH / 2, top: EDITOR_CANVAS_HEIGHT / 2, scaleX: 0.75, scaleY: 0.75, angle: 0, opacity: 1 },
+      bold:      { left: EDITOR_CANVAS_WIDTH / 2,    top: EDITOR_CANVAS_HEIGHT / 2,    scaleX: 0.75, scaleY: 0.75, angle: 0, opacity: 1 },
     };
     primary.set(setup[name]);
+    primary.setCoords?.();
     canvas.setActiveObject(primary);
     canvas.renderAll();
     setSelTick((t) => t + 1);
@@ -408,10 +483,10 @@ export function CoverEditor({
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
 
       const step = e.shiftKey ? 10 : 1;
-      if (e.key === 'ArrowLeft') { updateActive({ left: activeObj.left - step }); e.preventDefault(); }
+      if (e.key === 'ArrowLeft')  { updateActive({ left: activeObj.left - step }); e.preventDefault(); }
       if (e.key === 'ArrowRight') { updateActive({ left: activeObj.left + step }); e.preventDefault(); }
-      if (e.key === 'ArrowUp') { updateActive({ top: activeObj.top - step }); e.preventDefault(); }
-      if (e.key === 'ArrowDown') { updateActive({ top: activeObj.top + step }); e.preventDefault(); }
+      if (e.key === 'ArrowUp')    { updateActive({ top:  activeObj.top  - step }); e.preventDefault(); }
+      if (e.key === 'ArrowDown')  { updateActive({ top:  activeObj.top  + step }); e.preventDefault(); }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (activeObj.perenneAssetId != null) removeAsset(activeObj.perenneAssetId);
       }
@@ -695,11 +770,12 @@ export function CoverEditor({
                   </div>
                 </div>
 
+                {/* Bug 3 fix: range extended 1–500% */}
                 <Slider
                   label="Scale"
                   displayValue={`${activeValues.scalePct}%`}
-                  min={10}
-                  max={300}
+                  min={1}
+                  max={500}
                   value={activeValues.scalePct}
                   onChange={(e) => {
                     const s = Number(e.target.value) / 100;
@@ -723,7 +799,7 @@ export function CoverEditor({
                   onChange={(e) => updateActive({ opacity: Number(e.target.value) / 100 })}
                 />
 
-                {/* ⭐ Invert color toggle */}
+                {/* Invert color toggle — FillColor white filter */}
                 <button
                   type="button"
                   onClick={toggleInvert}
