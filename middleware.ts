@@ -4,24 +4,9 @@ import { NextResponse, type NextRequest } from 'next/server';
  * Route protection + security headers + host-based rewrite for the
  * legacy `api.perenne.app` domain.
  *
- * --- Hostnames ---
- *
- *   business.perenne.app — primary host (web app, dashboard, /api/*)
- *   api.perenne.app      — legacy host inherited from the dismissed
- *                          Cloudflare Worker. iOS app calls
- *                          GET https://api.perenne.app/team/{CODE}
- *                          to activate a team code. We rewrite that
- *                          to /api/team/[code] so iOS keeps working
- *                          with zero App Store update.
- *
- * Anything other than `/team/{CODE}` on api.perenne.app returns 404
- * (the old admin panel `/admin` and HMAC endpoints are gone).
- *
- * --- Public paths ---
- *
- * Public paths: landing, login, invite acceptance, password recovery,
- * design preview, AND the public team-resolve endpoint /api/team/*.
- * Everything else: redirects to /login if no session cookie present.
+ * v30 hotfix: API routes without session now return 401 JSON instead
+ * of redirecting to /login (which broke browser fetch from authed
+ * pages — fetch followed the 307 to an HTML page and crashed).
  */
 
 const PUBLIC_PATHS = new Set([
@@ -37,9 +22,9 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 const PUBLIC_PREFIXES = [
-  '/api/auth/',           // login, accept-invite, forgot-password, reset-password
-  '/api/codes/claimed',   // worker webhook (HMAC-authed) — kept for back-compat
-  '/api/team/',           // public team-code resolve (replaces Worker /team/{CODE})
+  '/api/auth/',
+  '/api/codes/claimed',
+  '/api/team/',           // public team-code resolve
   '/_next/',
   '/fonts/',
   '/images/',
@@ -51,14 +36,8 @@ export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const host = req.headers.get('host') ?? '';
 
-  // ─── Host-based rewrite for api.perenne.app ───────────────────────
-  // Match any host starting with "api." so this works for both prod
-  // (api.perenne.app) and any future preview deploy (api.staging.…).
+  // Host-based rewrite for api.perenne.app (legacy iOS endpoint)
   if (host.startsWith('api.')) {
-    // Only `/team/CODE` is exposed on the api host. Everything else
-    // gets a flat 404 — the legacy Worker had /admin, /codes/sync,
-    // /companies/sync, /assets/upload but those are now on the
-    // primary host (business.perenne.app) under different routes.
     const teamMatch = pathname.match(/^\/team\/([^/]+)\/?$/);
     if (teamMatch) {
       const url = req.nextUrl.clone();
@@ -68,7 +47,7 @@ export function middleware(req: NextRequest) {
     return new NextResponse('Not Found', { status: 404 });
   }
 
-  // ─── Standard security headers (primary host) ─────────────────────
+  // Standard security headers
   const response = NextResponse.next();
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('X-Frame-Options', 'DENY');
@@ -85,6 +64,15 @@ export function middleware(req: NextRequest) {
   const hasSession = req.cookies.get(SESSION_COOKIE);
 
   if (!hasSession) {
+    // v30 fix: API requests get 401 JSON, page requests get redirect.
+    // Browser fetch() following a 307 to /login (HTML) caused
+    // ERR_NETWORK_CHANGED-style failures on Save Cover.
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json(
+        { error: 'Not authenticated.' },
+        { status: 401 }
+      );
+    }
     const loginUrl = new URL('/login', req.url);
     return NextResponse.redirect(loginUrl);
   }
