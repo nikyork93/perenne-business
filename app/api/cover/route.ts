@@ -1,15 +1,22 @@
 import { NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import type { CoverAssetRef } from '@/types/cover';
+import { getOrCreateDefaultDesign } from '@/lib/design';
 
 /**
- * POST /api/cover
+ * POST /api/cover  (LEGACY ENDPOINT, kept for backward-compat)
  *
- * Saves a new active version of CoverConfig for the current user's company.
- * Marks all previous versions inactive.
+ * Behaviour change in Session 1:
+ * The endpoint now performs a DUAL-WRITE — it continues to write a
+ * new active version of CoverConfig (so iOS, which still reads
+ * CoverConfig, keeps working) AND mirrors the same content into the
+ * company's DEFAULT Design (so the new design library is kept in
+ * sync). Once the iOS migration ships in Session 3, the CoverConfig
+ * branch can be retired.
  *
- * Body shape — TWO scopes supported:
+ * Body shape (unchanged):
  *
  *   { scope: 'cover', cover: {...}, canvas?: {...}, version?: number }
  *     → updates cover fields, preserves existing pageWatermarks
@@ -17,10 +24,10 @@ import type { CoverAssetRef } from '@/types/cover';
  *   { scope: 'pageWatermarks', pageWatermarks: [...] }
  *     → updates watermarks, preserves existing cover
  *
- * For backward compatibility, body without `scope` is treated as { scope: 'cover' }
+ * Backward compat: body without `scope` is treated as { scope: 'cover' }
  * and reads cover from `body.cover`.
  *
- * Response: { config: { version }, warnings?: string[] }
+ * Response: { config: { version }, design: { id }, warnings?: string[] }
  */
 export async function POST(req: Request) {
   const session = await requireSession();
@@ -56,7 +63,6 @@ export async function POST(req: Request) {
     );
   }
 
-  // Validate per scope
   if (scope === 'cover') {
     if (!body.cover?.backgroundColor) {
       return NextResponse.json({ error: 'Missing cover.backgroundColor.' }, { status: 400 });
@@ -74,39 +80,37 @@ export async function POST(req: Request) {
     }
   }
 
-  // ── Load current active config to preserve unchanged scope ──
-  const current = await prisma.coverConfig.findFirst({
+  // ── Load current state to preserve unchanged scope ──────────────
+  const currentCfg = await prisma.coverConfig.findFirst({
     where: { companyId, isActive: true },
     orderBy: { version: 'desc' },
   });
 
-  const currentExtra = current as unknown as {
+  const currentExtra = currentCfg as unknown as {
     backgroundImageUrl?: string | null;
     pageWatermarksJson?: unknown;
   } | null;
 
-  // ── Build merged data based on scope ──
   const warnings: string[] = [];
 
   let backgroundColor: string;
   let backgroundImageUrl: string | null;
-  let assetsJson: object;
+  let assetsJson: CoverAssetRef[];
   let quoteText: string | null;
   let quotePosition: string | null;
   let quoteColor: string | null;
-  let pageWatermarksJson: object | null;
+  let pageWatermarksJson: CoverAssetRef[] | null;
 
   if (scope === 'cover' && body.cover) {
     backgroundColor = body.cover.backgroundColor;
     backgroundImageUrl = body.cover.backgroundImageUrl ?? null;
-    assetsJson = body.cover.assets as unknown as object;
+    assetsJson = body.cover.assets;
     quoteText = body.cover.quote?.text ?? null;
     quotePosition = body.cover.quote?.position ?? null;
     quoteColor = body.cover.quote?.color ?? null;
-    // Preserve watermarks from current
-    pageWatermarksJson = (currentExtra?.pageWatermarksJson as object | null) ?? null;
+    pageWatermarksJson =
+      ((currentExtra?.pageWatermarksJson ?? null) as CoverAssetRef[] | null) ?? null;
 
-    // Warnings
     const missingUrls = body.cover.assets.filter((a) => !a.url);
     if (missingUrls.length > 0) {
       warnings.push(
@@ -120,20 +124,19 @@ export async function POST(req: Request) {
       warnings.push('Background image is not yet uploaded — re-save once upload completes.');
     }
   } else {
-    // scope === 'pageWatermarks': preserve cover from current, update watermarks
-    if (!current) {
+    if (!currentCfg) {
       return NextResponse.json(
         { error: 'No existing cover config — save the cover first.' },
         { status: 400 }
       );
     }
-    backgroundColor = current.backgroundColor;
+    backgroundColor = currentCfg.backgroundColor;
     backgroundImageUrl = currentExtra?.backgroundImageUrl ?? null;
-    assetsJson = (current.assetsJson as unknown as object) ?? [];
-    quoteText = current.quoteText;
-    quotePosition = current.quotePosition;
-    quoteColor = current.quoteColor;
-    pageWatermarksJson = (body.pageWatermarks ?? []) as unknown as object;
+    assetsJson = (currentCfg.assetsJson as unknown as CoverAssetRef[]) ?? [];
+    quoteText = currentCfg.quoteText;
+    quotePosition = currentCfg.quotePosition;
+    quoteColor = currentCfg.quoteColor;
+    pageWatermarksJson = (body.pageWatermarks ?? []) as CoverAssetRef[];
 
     const missingUrls = (body.pageWatermarks ?? []).filter((w) => !w.url);
     if (missingUrls.length > 0) {
@@ -143,7 +146,7 @@ export async function POST(req: Request) {
     }
   }
 
-  // ── Compute next version, deactivate old, create new ──
+  // ── Write 1/2: legacy CoverConfig (new active version) ──────────
   const latest = await prisma.coverConfig.findFirst({
     where: { companyId },
     orderBy: { version: 'desc' },
@@ -156,32 +159,57 @@ export async function POST(req: Request) {
     data: { isActive: false },
   });
 
-  const created = await prisma.coverConfig.create({
+  const createdConfig = await prisma.coverConfig.create({
     data: {
       companyId,
       version: nextVersion,
       backgroundColor,
       backgroundImageUrl,
-      assetsJson,
+      assetsJson: assetsJson as unknown as Prisma.InputJsonValue,
       quoteText,
       quotePosition,
       quoteColor,
-      pageWatermarksJson,
+      pageWatermarksJson:
+        pageWatermarksJson as unknown as Prisma.InputJsonValue | null,
       isActive: true,
     } as unknown as Parameters<typeof prisma.coverConfig.create>[0]['data'],
+  });
+
+  // ── Write 2/2: default Design (mirror same content) ─────────────
+  // Lazily creates the Default design if the company doesn't have one
+  // yet (e.g. companies onboarded before the migration ran).
+  const defaultDesign = await getOrCreateDefaultDesign(companyId);
+  const updatedDesign = await prisma.design.update({
+    where: { id: defaultDesign.id },
+    data: {
+      backgroundColor,
+      backgroundImageUrl,
+      assetsJson: assetsJson as unknown as Prisma.InputJsonValue,
+      pageWatermarksJson:
+        (pageWatermarksJson ?? []) as unknown as Prisma.InputJsonValue,
+      quoteText,
+      quotePosition,
+      quoteColor,
+    },
   });
 
   await prisma.auditLog.create({
     data: {
       companyId,
       actorEmail: session.email,
+      actorRole: session.role,
       action: scope === 'pageWatermarks' ? 'cover.watermarks_saved' : 'cover.saved',
-      details: { version: nextVersion, scope } as unknown as object,
+      metadata: {
+        version: nextVersion,
+        scope,
+        designId: updatedDesign.id,
+      } as unknown as Prisma.InputJsonValue,
     },
   });
 
   return NextResponse.json({
-    config: { version: created.version },
+    config: { version: createdConfig.version },
+    design: { id: updatedDesign.id, name: updatedDesign.name },
     warnings: warnings.length > 0 ? warnings : undefined,
   });
 }

@@ -20,7 +20,7 @@ interface NavItem {
 
 const MAIN_NAV: NavItem[] = [
   { href: '/dashboard',    label: 'Dashboard' },
-  { href: '/cover',        label: 'Cover' },
+  { href: '/designs',      label: 'Designs' },
   { href: '/codes',        label: 'Codes' },
   { href: '/distribution', label: 'Distribution' },
   { href: '/store',        label: 'Store' },

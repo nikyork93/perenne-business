@@ -7,6 +7,20 @@ import type { CoverConfigData, CoverAssetRef } from '@/types/cover';
 
 interface Props {
   initialConfig: CoverConfigData;
+  /**
+   * If provided, the editor saves to PATCH /api/designs/[designId]
+   * (the new design library endpoint). If omitted, it falls back to
+   * POST /api/cover (the legacy endpoint, which dual-writes to both
+   * the legacy CoverConfig table AND the company's default Design).
+   * Practical use: every page in v27 should pass designId. The
+   * fallback exists for any caller still using EditorClient outside
+   * a Design context (defensive — there shouldn't be one).
+   */
+  designId?: string;
+  /** Display-only — shown in flash messages */
+  designName?: string;
+  /** When true, hides save buttons / disables interactions */
+  readOnly?: boolean;
 }
 
 type Tab = 'cover' | 'pages';
@@ -20,31 +34,40 @@ type Tab = 'cover' | 'pages';
  * Each tab has its own internal state and Save button. Saves are independent
  * (cover save preserves watermarks; watermarks save preserves cover).
  *
- * Both POST to /api/cover but only update their respective fields. Each save
- * creates a new CoverConfig version.
+ * Save endpoint:
+ *   - if `designId` is provided → PATCH /api/designs/[designId]
+ *   - else → POST /api/cover (legacy backward-compat path)
+ *
+ * The two endpoints have different request shapes so this component
+ * picks the right body builder per case. They both return JSON
+ * (validated by readJsonOrFail) so the UI flow is identical.
  */
-export function EditorClient({ initialConfig }: Props) {
+export function EditorClient({
+  initialConfig,
+  designId,
+  designName,
+  readOnly,
+}: Props) {
   const [tab, setTab] = useState<Tab>('cover');
   const [flash, setFlash] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
 
-  // ─── API helpers ───────────────────────────────────────────────────
-  // Both save flows share the same response-handling pattern:
-  //
-  //   1. fetch — catches connectivity errors (DNS, timeout, CORS, etc)
-  //   2. content-type check — detects when the server returned HTML
-  //      (a Next.js 404/500 error page) instead of JSON. Without this
-  //      check, res.json() throws a SyntaxError and we mislabel the
-  //      failure as "Network error".
-  //   3. JSON parse — catches truly malformed JSON
-  //   4. res.ok — surfaces the server's `{ error }` body for non-2xx
-  //
-  // Every failure path also logs to the console with the raw response
-  // text so a curious user can hand-deliver the cause when reporting.
-
+  // ─── readJsonOrFail return type widened to also cover the
+  //     PATCH /api/designs/[id] response ({ design: {...} })
   async function readJsonOrFail(
     res: Response,
     label: string
-  ): Promise<{ ok: true; data: { config?: { version?: number }; error?: string; warnings?: string[] } } | { ok: false; msg: string }> {
+  ): Promise<
+    | {
+        ok: true;
+        data: {
+          config?: { version?: number };
+          design?: { id?: string; name?: string };
+          error?: string;
+          warnings?: string[];
+        };
+      }
+    | { ok: false; msg: string }
+  > {
     const ct = res.headers.get('content-type') ?? '';
     if (!ct.includes('application/json')) {
       const text = await res.text().catch(() => '');
@@ -69,18 +92,46 @@ export function EditorClient({ initialConfig }: Props) {
   }
 
   async function saveCover(coverConfig: CoverConfigData) {
+    if (readOnly) return;
     setFlash(null);
     let res: Response;
     try {
-      res = await fetch('/api/cover', {
-        method: 'POST',
+      // Design path (PATCH /api/designs/[id]) takes a partial Design
+      // shape — assets/quote/etc as top-level fields. Legacy /api/cover
+      // takes a wrapper shape with scope='cover'. Build the right one.
+      const url = designId ? `/api/designs/${designId}` : '/api/cover';
+      const method = designId ? 'PATCH' : 'POST';
+      // For the design path: only send fields that the editor actively
+      // owns. The CoverEditor doesn't currently expose a quote UI, so
+      // we MUST NOT send `quote: null` for an unset quote — the PATCH
+      // route would interpret null as "clear it" and wipe any quote
+      // that was set elsewhere (e.g. from a previous editor version,
+      // or from the legacy /api/cover endpoint). Skip the field
+      // entirely when it's unset.
+      const designBody: Record<string, unknown> = {
+        backgroundColor: coverConfig.cover.backgroundColor,
+        backgroundImageUrl: coverConfig.cover.backgroundImageUrl ?? null,
+        assets: coverConfig.cover.assets,
+      };
+      if (coverConfig.cover.quote) {
+        designBody.quote = {
+          text: coverConfig.cover.quote.text,
+          position: coverConfig.cover.quote.position,
+          color: coverConfig.cover.quote.color,
+        };
+      }
+      const body = designId
+        ? JSON.stringify(designBody)
+        : JSON.stringify({
+            scope: 'cover',
+            version: coverConfig.version,
+            canvas: coverConfig.canvas,
+            cover: coverConfig.cover,
+          });
+      res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scope: 'cover',
-          version: coverConfig.version,
-          canvas: coverConfig.canvas,
-          cover: coverConfig.cover,
-        }),
+        body,
       });
     } catch (err) {
       console.error('[saveCover] fetch failed', err);
@@ -102,25 +153,30 @@ export function EditorClient({ initialConfig }: Props) {
     }
 
     const warn = data.warnings?.join(' · ');
+    const versionLabel = data.config?.version ?? '—';
+    const successMsg = designId
+      ? `Cover saved${designName ? ` for "${designName}"` : ''}.`
+      : `Cover saved as version ${versionLabel}.`;
     setFlash({
       type: 'ok',
-      msg: warn
-        ? `Cover saved. Warning: ${warn}`
-        : `Cover saved as version ${data.config?.version ?? '—'}.`,
+      msg: warn ? `${successMsg} Warning: ${warn}` : successMsg,
     });
   }
 
   async function saveWatermarks(watermarks: CoverAssetRef[]) {
+    if (readOnly) return;
     setFlash(null);
     let res: Response;
     try {
-      res = await fetch('/api/cover', {
-        method: 'POST',
+      const url = designId ? `/api/designs/${designId}` : '/api/cover';
+      const method = designId ? 'PATCH' : 'POST';
+      const body = designId
+        ? JSON.stringify({ pageWatermarks: watermarks })
+        : JSON.stringify({ scope: 'pageWatermarks', pageWatermarks: watermarks });
+      res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scope: 'pageWatermarks',
-          pageWatermarks: watermarks,
-        }),
+        body,
       });
     } catch (err) {
       console.error('[saveWatermarks] fetch failed', err);
@@ -142,11 +198,13 @@ export function EditorClient({ initialConfig }: Props) {
     }
 
     const warn = data.warnings?.join(' · ');
+    const versionLabel = data.config?.version ?? '—';
+    const successMsg = designId
+      ? `Watermarks saved${designName ? ` for "${designName}"` : ''}.`
+      : `Watermarks saved as version ${versionLabel}.`;
     setFlash({
       type: 'ok',
-      msg: warn
-        ? `Watermarks saved. Warning: ${warn}`
-        : `Watermarks saved as version ${data.config?.version ?? '—'}.`,
+      msg: warn ? `${successMsg} Warning: ${warn}` : successMsg,
     });
   }
 
@@ -236,17 +294,21 @@ export function EditorClient({ initialConfig }: Props) {
       <div style={{ display: tab === 'cover' ? 'block' : 'none' }}>
         <CoverEditor
           initialConfig={initialConfig}
-          onSave={saveCover}
-          onAssetUpload={(file) => uploadFile(file, 'asset')}
-          onBackgroundUpload={(file) => uploadFile(file, 'background')}
+          // readOnly: pass undefined onSave so the Save button gets
+          // disabled by the editor itself (it already checks `!onSave`
+          // on the disabled prop). Same for upload handlers — we don't
+          // want VIEWERs to upload to R2 either.
+          onSave={readOnly ? undefined : saveCover}
+          onAssetUpload={readOnly ? undefined : (file) => uploadFile(file, 'asset')}
+          onBackgroundUpload={readOnly ? undefined : (file) => uploadFile(file, 'background')}
           isActive={tab === 'cover'}
         />
       </div>
       <div style={{ display: tab === 'pages' ? 'block' : 'none' }}>
         <PageEditor
           initialWatermarks={initialConfig.pageWatermarks ?? []}
-          onSave={saveWatermarks}
-          onAssetUpload={(file) => uploadFile(file, 'watermark')}
+          onSave={readOnly ? undefined : saveWatermarks}
+          onAssetUpload={readOnly ? undefined : (file) => uploadFile(file, 'watermark')}
           isActive={tab === 'pages'}
         />
       </div>

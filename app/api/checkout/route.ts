@@ -1,16 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { PackageType } from '@prisma/client';
+import { PackageType, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
 import { env } from '@/lib/env';
 import { getStripe } from '@/lib/stripe';
 import { getTier } from '@/lib/pricing';
+import { buildDesignSnapshot, getOrCreateDefaultDesign } from '@/lib/design';
 
 export const runtime = 'nodejs';
 
+/**
+ * POST /api/checkout
+ *
+ * Body: { packageType: PackageType, designId?: string }
+ *
+ * Behaviour change in Session 1:
+ * - Now accepts an optional designId so the buyer can pick which design
+ *   the codes will use. If omitted, the company's default design is used.
+ * - At PENDING order creation, the chosen Design is COPIED into
+ *   order.designSnapshotJson — a frozen JSON that iOS (post-Session-3)
+ *   reads at code redemption. Subsequent edits to the source Design
+ *   never affect this order. Snapshot is taken at PENDING (not at
+ *   webhook PAID) so the user gets exactly the design they saw at
+ *   checkout, even if it's edited between checkout and payment
+ *   confirmation.
+ */
 const bodySchema = z.object({
   packageType: z.nativeEnum(PackageType),
+  designId: z.string().cuid().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -18,7 +36,6 @@ export async function POST(req: NextRequest) {
   if (!session || !session.companyId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  // Only OWNER or SUPERADMIN can purchase
   if (session.role !== 'OWNER' && session.role !== 'SUPERADMIN') {
     return NextResponse.json(
       { error: 'Only the company OWNER can purchase packs.' },
@@ -26,19 +43,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let packageType: PackageType;
+  let parsedBody: z.infer<typeof bodySchema>;
   try {
     const body = await req.json();
     const parsed = bodySchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json({ error: 'Invalid package type' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid body.' }, { status: 400 });
     }
-    packageType = parsed.data.packageType;
+    parsedBody = parsed.data;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const tier = getTier(packageType);
+  const tier = getTier(parsedBody.packageType);
   if (!tier) {
     return NextResponse.json({ error: 'Unknown package' }, { status: 400 });
   }
@@ -55,6 +72,30 @@ export async function POST(req: NextRequest) {
   if (!company) {
     return NextResponse.json({ error: 'Company not found' }, { status: 404 });
   }
+
+  // ── Resolve the Design to snapshot ──────────────────────────────
+  const design = parsedBody.designId
+    ? await prisma.design.findFirst({
+        where: {
+          id: parsedBody.designId,
+          companyId: session.companyId,
+          isArchived: false,
+        },
+      })
+    : await getOrCreateDefaultDesign(session.companyId);
+
+  if (!design) {
+    return NextResponse.json(
+      {
+        error: parsedBody.designId
+          ? 'Design not found or archived.'
+          : 'No default design configured. Configure your cover first.',
+      },
+      { status: 400 }
+    );
+  }
+
+  const snapshot = buildDesignSnapshot(design);
 
   const stripe = getStripe();
 
@@ -84,20 +125,21 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Create a PENDING order — webhook will mark PAID + generate codes
+  // Create a PENDING order with the design SNAPSHOT frozen-in.
   const order = await prisma.order.create({
     data: {
       companyId: company.id,
-      packageType,
+      packageType: parsedBody.packageType,
       quantity: tier.quantity,
       unitPriceCents: tier.pricePerCodeCents,
       totalPriceCents: tier.priceCents,
       currency: 'EUR',
       status: 'PENDING',
+      designId: design.id,
+      designSnapshotJson: snapshot as unknown as Prisma.InputJsonValue,
     },
   });
 
-  // Create Stripe Checkout Session
   const checkoutSession = await stripe.checkout.sessions.create({
     mode: 'payment',
     customer: stripeCustomerId,
@@ -108,34 +150,32 @@ export async function POST(req: NextRequest) {
           unit_amount: tier.priceCents,
           product_data: {
             name: `Perenne Business — ${tier.name} pack`,
-            description: `${tier.quantity} branded notebook codes`,
+            description: `${tier.quantity} branded notebook codes — ${design.name}`,
           },
         },
         quantity: 1,
       },
     ],
-    // Enable automatic tax (requires Stripe Tax configured in dashboard)
     automatic_tax: { enabled: true },
-    // Collect fiscal info if missing
     tax_id_collection: { enabled: true },
     invoice_creation: {
       enabled: true,
       invoice_data: {
-        description: `${tier.name} pack — ${tier.quantity} notebook codes`,
+        description: `${tier.name} pack — ${tier.quantity} notebook codes (${design.name})`,
         metadata: {
           orderId: order.id,
           companyId: company.id,
+          designId: design.id,
         },
       },
     },
     metadata: {
       orderId: order.id,
       companyId: company.id,
-      packageType,
+      packageType: parsedBody.packageType,
       quantity: String(tier.quantity),
+      designId: design.id,
     },
-    // Pass orderId in PaymentIntent metadata too, so we can link back from
-    // payment_intent.payment_failed webhook (Stripe doesn't include session metadata there)
     payment_intent_data: {
       metadata: {
         orderId: order.id,
@@ -144,18 +184,13 @@ export async function POST(req: NextRequest) {
     },
     success_url: `${env.NEXT_PUBLIC_APP_URL}/store/success?order_id=${order.id}`,
     cancel_url: `${env.NEXT_PUBLIC_APP_URL}/store?cancelled=1`,
-    // Limit to Perenne's primary markets for fraud protection
-    // Omit for worldwide
-    // allowed_countries: ['IT', 'CH', 'DE', 'FR', 'ES', 'AT', 'BE', 'NL', 'PT', 'IE', 'SE', 'DK', 'FI', 'GB', 'US'],
   });
-
-  // NOTE: checkoutSession.payment_intent is null at creation time — it's populated
-  // only after the user completes checkout. The `checkout.session.completed` webhook
-  // sets order.stripePaymentIntentId from the final session.payment_intent value.
 
   return NextResponse.json({
     ok: true,
     url: checkoutSession.url,
     orderId: order.id,
+    designId: design.id,
+    designName: design.name,
   });
 }

@@ -16,6 +16,11 @@ interface CodeRow {
   claimedDeviceId: string | null;
   createdAt: string;
   orderId: string;
+  /** Design the code is locked to (the order's snapshot). Null for pre-migration orders. */
+  designId: string | null;
+  designName: string | null;
+  /** True if the source design has been archived. The code's snapshot is unaffected, but we badge it for transparency. */
+  designArchived: boolean;
 }
 
 const STATUS_TONE: Record<CodeStatus, 'success' | 'neutral' | 'danger'> = {
@@ -152,6 +157,7 @@ export function CodesTable() {
                 <tr className="border-b border-glass-border">
                   <th className="text-left label px-4 py-3">Code</th>
                   <th className="text-left label px-4 py-3">Status</th>
+                  <th className="text-left label px-4 py-3">Design</th>
                   <th className="text-left label px-4 py-3">Assigned to</th>
                   <th className="text-left label px-4 py-3">Claimed</th>
                   <th className="text-left label px-4 py-3">Created</th>
@@ -176,6 +182,28 @@ export function CodesTable() {
                     </td>
                     <td className="px-4 py-3">
                       <Badge tone={STATUS_TONE[c.status]}>{c.status.toLowerCase()}</Badge>
+                    </td>
+                    <td className="px-4 py-3 text-ink-dim text-[11px]">
+                      {/* Design name (read-only — comes from the order's
+                          frozen designSnapshotJson; the editable source
+                          is only shown for context). Designs that were
+                          archived after the batch was sold get a small
+                          tag — the snapshot is still valid, but the
+                          editable template is no longer in the library. */}
+                      {c.designName ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate max-w-[140px]" title={c.designName}>
+                            {c.designName}
+                          </span>
+                          {c.designArchived && (
+                            <span className="text-[9px] uppercase tracking-wider text-ink-faint font-mono">
+                              archived
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-ink-dim">
                       {c.assignedToEmail ? (
