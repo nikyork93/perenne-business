@@ -90,6 +90,7 @@ model Company {
   coverConfigs        CoverConfig[]
   coverAssets         CoverAsset[]
   designs             Design[]
+  legacyTeamCodes     LegacyTeamCode[]
   orders              Order[]
   notebookCodes       NotebookCode[]
   distributions       DistributionBatch[]
@@ -241,6 +242,64 @@ model CoverAsset {
   @@index([companyId])
 }
 
+// ─── Legacy team codes (manual, not tied to a Stripe Order) ─────
+//
+// Carry-over from the old Cloudflare Worker (api.perenne.app) era —
+// codes like STELVIO2026 that were created by hand from the admin
+// panel for partners, demos, gifts, internal use. After dismissing
+// the Worker, these live in Postgres alongside Stripe-generated
+// codes and resolve via the same /api/team/[code] public endpoint.
+//
+// Differences from NotebookCode:
+//   - No Order, no Stripe payment, no automatic generation
+//   - Optional company link (some demos may not be company-scoped)
+//   - Optional design link (the admin can attach a Design template
+//     so the iOS app gets the full snapshot, OR can fill the legacy
+//     fields manually — useful for one-off codes that don't need
+//     the full editor pipeline)
+//   - Optional expiration (e.g. trade show codes that should die)
+
+model LegacyTeamCode {
+  id                  String    @id @default(cuid())
+  code                String    @unique             // case-insensitive, normalized to uppercase
+  label               String?                       // free-form admin note ("Acme partner", "Stelvio Q4 trade show")
+
+  // Optional company association — if set, the resolved /team/{CODE}
+  // response uses the company's name + branding fields.
+  companyId           String?
+  company             Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  // Optional design — if set, snapshot's pulled fresh from the
+  // referenced Design at resolve time. NOT a frozen snapshot, since
+  // legacy codes are "live" tied to a template (the admin manages
+  // them as long-running references, not as one-shot purchases).
+  designId            String?
+  design              Design?   @relation(fields: [designId], references: [id], onDelete: SetNull)
+
+  // Manual fallback fields — used if no company / no design or to
+  // override any of them. Mirror TeamBrandConfig (iOS) shape so we
+  // can serve a complete response without joins when needed.
+  manualCompanyName   String?
+  manualLogoUrl       String?
+  manualLogoExtUrl    String?
+  manualLogoWhiteUrl  String?
+  manualPrimaryColor  String?                       // hex
+  manualQuote         String?
+
+  // Lifecycle
+  seats               Int?                          // optional cap, informational only
+  expiresAt           DateTime?                     // null = never expires
+  isActive            Boolean   @default(true)      // soft kill-switch
+
+  createdByEmail      String                        // who in admin created it
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([code])
+  @@index([companyId])
+  @@index([isActive])
+}
+
 // ─── Designs (library of editable cover/page templates) ─────────
 //
 // A Design is a reusable, editable template owned by a Company. It
@@ -288,6 +347,7 @@ model Design {
 
   // Relations
   orders              Order[]                           // orders that snapshotted this design
+  legacyTeamCodes     LegacyTeamCode[]                  // manual codes pointing at this design (live ref)
 
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt

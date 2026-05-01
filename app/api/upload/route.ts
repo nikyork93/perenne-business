@@ -1,16 +1,27 @@
 import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { putObject } from '@/lib/r2';
+
+export const runtime = 'nodejs';
 
 /**
  * POST /api/upload
- * Uploads a file to R2 via the Cloudflare Worker.
- * FormData: { file: File, kind: 'asset' | 'background' }
+ *
+ * Upload a file to R2 directly (no Cloudflare Worker proxy).
+ *
+ * FormData: { file: File, kind: 'asset' | 'background' | 'watermark' }
  * Response: { url: string }
  *
  * Path layout in R2:
- *   covers/{companyId}/assets/{timestamp}-{filename}     (kind=asset)
+ *   covers/{companyId}/assets/{timestamp}-{filename}      (kind=asset)
  *   covers/{companyId}/backgrounds/{timestamp}-{filename} (kind=background)
+ *   covers/{companyId}/watermarks/{timestamp}-{filename}  (kind=watermark)
+ *
+ * Migration note: previously this proxied via Worker /assets/upload
+ * with X-Upload-Secret. The Worker is being dismissed; we now use
+ * @aws-sdk/client-s3 against R2's S3-compatible API. See lib/r2.ts
+ * for the env var setup.
  */
 
 const ALLOWED_TYPES = [
@@ -32,15 +43,6 @@ export async function POST(req: Request) {
   }
   if (session.role === 'VIEWER') {
     return NextResponse.json({ error: 'Insufficient permissions.' }, { status: 403 });
-  }
-
-  const workerUrl = process.env.ASSET_UPLOAD_WORKER_URL;
-  const workerSecret = process.env.ASSET_UPLOAD_WORKER_SECRET;
-  if (!workerUrl || !workerSecret) {
-    return NextResponse.json(
-      { error: 'Asset upload not configured. Set ASSET_UPLOAD_WORKER_URL and ASSET_UPLOAD_WORKER_SECRET.' },
-      { status: 500 }
-    );
   }
 
   let formData: FormData;
@@ -75,51 +77,56 @@ export async function POST(req: Request) {
     );
   }
 
-  // Build path
+  // Build R2 key
   const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const subfolder =
     kind === 'background' ? 'backgrounds' : kind === 'watermark' ? 'watermarks' : 'assets';
   const key = `covers/${session.companyId}/${subfolder}/${Date.now()}-${cleanName}`;
 
-  // Forward to Worker
-  const workerForm = new FormData();
-  workerForm.append('file', file);
-  workerForm.append('key', key);
+  // Buffer the file (Next.js File is a Web ReadableStream; AWS SDK
+  // wants Buffer / Uint8Array). For our 10MB max this is fine in RAM.
+  let body: Buffer;
+  try {
+    const arr = await file.arrayBuffer();
+    body = Buffer.from(arr);
+  } catch (err) {
+    console.error('[upload] arrayBuffer failed', err);
+    return NextResponse.json({ error: 'Failed to read file.' }, { status: 400 });
+  }
 
-  const workerRes = await fetch(workerUrl, {
-    method: 'POST',
-    headers: { 'X-Upload-Secret': workerSecret },
-    body: workerForm,
-  });
-
-  if (!workerRes.ok) {
-    const text = await workerRes.text().catch(() => '');
+  // Upload directly to R2
+  let result: { url: string };
+  try {
+    result = await putObject({
+      key,
+      body,
+      contentType: file.type,
+    });
+  } catch (err) {
+    console.error('[upload] R2 putObject failed', err);
     return NextResponse.json(
-      { error: `Worker upload failed: ${workerRes.status} ${text}` },
+      { error: err instanceof Error ? err.message : 'R2 upload failed.' },
       { status: 502 }
     );
   }
 
-  const data = (await workerRes.json()) as { url?: string };
-  if (!data.url) {
-    return NextResponse.json({ error: 'Worker did not return URL.' }, { status: 502 });
-  }
-
-  // Optional: persist as CoverAsset record for tracking
+  // Optional: persist as CoverAsset record for tracking. Wrapped in
+  // try/catch since the schema may not yet have all expected columns
+  // in older deploys — the upload succeeds either way.
   try {
     await prisma.coverAsset.create({
       data: {
         companyId: session.companyId,
         filename: cleanName,
-        url: data.url,
+        url: result.url,
         kind,
         sizeBytes: file.size,
         contentType: file.type,
       } as unknown as Parameters<typeof prisma.coverAsset.create>[0]['data'],
     });
   } catch {
-    // Non-fatal: schema may not yet have `kind` column
+    // Non-fatal: schema may not have these columns
   }
 
-  return NextResponse.json({ url: data.url });
+  return NextResponse.json({ url: result.url });
 }

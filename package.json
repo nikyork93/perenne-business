@@ -14,6 +14,7 @@
     "prisma:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.700.0",
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^3.0.3",
     "fabric": "5.3.0",

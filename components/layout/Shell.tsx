@@ -28,10 +28,11 @@ const MAIN_NAV: NavItem[] = [
 ];
 
 const ADMIN_NAV: NavItem[] = [
-  { href: '/admin/companies', label: 'Companies' },
-  { href: '/admin/users',     label: 'Users' },
-  { href: '/admin/revenue',   label: 'Revenue' },
-  { href: '/admin/audit',     label: 'Audit log' },
+  { href: '/admin/companies',    label: 'Companies' },
+  { href: '/admin/users',        label: 'Users' },
+  { href: '/admin/legacy-codes', label: 'Legacy codes' },
+  { href: '/admin/revenue',      label: 'Revenue' },
+  { href: '/admin/audit',        label: 'Audit log' },
 ];
 
 const SETTINGS_NAV: NavItem[] = [
