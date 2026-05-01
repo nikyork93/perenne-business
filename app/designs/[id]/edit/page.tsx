@@ -3,9 +3,9 @@ import Link from 'next/link';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Shell } from '@/components/layout/Shell';
-import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge, Button } from '@/components/ui';
 import { EditorClient } from '@/components/editor/EditorClient';
+import { InlineDesignName } from '@/components/designs/InlineDesignName';
 import type { CoverConfigData, CoverAssetRef } from '@/types/cover';
 import { DEFAULT_COVER_CONFIG } from '@/types/cover';
 
@@ -72,19 +72,31 @@ export default async function DesignEditPage({ params }: Props) {
       userEmail={session.email}
       isSuperAdmin={session.role === 'SUPERADMIN'}
     >
-      <PageHeader
-        eyebrow="Library · editing design"
-        title={design.name}
-        description="Edit the cover and the page watermarks. Saves are independent — Save Cover and Save Watermarks work separately."
-        actions={
-          <div className="flex items-center gap-2">
-            {design.isDefault && <Badge tone="accent">Default</Badge>}
-            <Link href="/designs">
-              <Button variant="ghost">← All designs</Button>
-            </Link>
-          </div>
-        }
-      />
+      {/* Custom header with editable name — replaces <PageHeader>
+          since the title is interactive (click-to-rename). Mirrors the
+          PageHeader visual structure (eyebrow + h1 + description + actions)
+          but injects InlineDesignName in the h1 slot. */}
+      <header className="flex items-start justify-between gap-6 mb-8">
+        <div className="min-w-0 flex-1">
+          <div className="label mb-2">Library · editing design</div>
+          <h1 className="font-display italic text-[38px] leading-[1.05] tracking-tight text-ink min-w-0">
+            <InlineDesignName
+              designId={design.id}
+              initialName={design.name}
+              className="font-display italic text-[38px] leading-[1.05] tracking-tight"
+            />
+          </h1>
+          <p className="mt-3 text-sm text-ink-dim max-w-2xl leading-relaxed">
+            Click the name to rename. Edit the cover and the page watermarks below — saves are independent (Save Cover and Save Watermarks work separately).
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {design.isDefault && <Badge tone="accent">Default</Badge>}
+          <Link href="/designs">
+            <Button variant="ghost">← All designs</Button>
+          </Link>
+        </div>
+      </header>
 
       <EditorClient
         initialConfig={initialConfig}

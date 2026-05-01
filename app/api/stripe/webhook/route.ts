@@ -159,10 +159,46 @@ async function handleCheckoutCompleted(sessionObj: Stripe.Checkout.Session) {
     });
   });
 
-  // Sync codes to Cloudflare Worker KV (fire-and-forget, failures don't block)
-  syncCodesToKV(companyId, codes).catch((e) =>
-    console.error('KV sync failed (non-blocking):', e)
-  );
+  // Sync codes to Cloudflare Worker KV (fire-and-forget, failures don't block).
+  // Read the order back WITH the design snapshot + company branding so the
+  // Worker can populate KV[CODE] with everything iOS needs in a single fetch.
+  // The snapshot was frozen at PENDING in /api/checkout — we just forward it.
+  const orderForSync = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      designSnapshotJson: true,
+      design: { select: { name: true } },
+      company: {
+        select: {
+          name: true,
+          slug: true,
+          logoSymbolUrl: true,
+          logoExtendedUrl: true,
+          primaryColor: true,
+        },
+      },
+    },
+  });
+
+  syncCodesToKV({
+    companyId,
+    codes,
+    company: orderForSync?.company
+      ? {
+          name: orderForSync.company.name,
+          slug: orderForSync.company.slug,
+          logoSymbolUrl: orderForSync.company.logoSymbolUrl ?? null,
+          logoExtendedUrl: orderForSync.company.logoExtendedUrl ?? null,
+          primaryColor: orderForSync.company.primaryColor ?? null,
+        }
+      : null,
+    design: orderForSync?.designSnapshotJson
+      ? {
+          name: orderForSync.design?.name ?? null,
+          snapshot: orderForSync.designSnapshotJson,
+        }
+      : null,
+  }).catch((e) => console.error('KV sync failed (non-blocking):', e));
 
   console.log(`✓ Order ${orderId} PAID — generated ${quantity} codes`);
 }
@@ -241,14 +277,56 @@ async function handleRefunded(charge: Stripe.Charge) {
 // ─── Cloudflare Worker KV sync ───────────────────────────────
 
 /**
- * Sync newly generated codes to the Worker KV so that iOS app's GET /team/{code}
+ * Sync newly generated codes to the Worker KV so iOS app's GET /team/{code}
  * resolves immediately. Fire-and-forget with HMAC auth.
+ *
+ * Payload contract (versioned, additive — Worker handler must accept the
+ * old `{companyId, codes}` shape too for backward compat with admin
+ * panel manual sync flows):
+ *
+ *   {
+ *     v: 2,                  // schema version — bump if shape breaks
+ *     companyId: string,
+ *     codes: string[],       // PRN-XXXX-XXXX-XXXX
+ *     company: {             // null only if order has no company (impossible)
+ *       name, slug, logoSymbolUrl, logoExtendedUrl, primaryColor
+ *     } | null,
+ *     design: {              // null for pre-migration orders
+ *       name: string | null,
+ *       snapshot: DesignSnapshot   // full self-contained JSON
+ *     } | null
+ *   }
+ *
+ * The Worker side (handleCodesSync in perenne-api) is expected to:
+ *   - Verify HMAC `${timestamp}:${companyId}` against PERENNE_API_SECRET
+ *   - For each code in `codes`, write KV[code] = JSON.stringify({...
+ *     company..., ...legacy fields..., design: snapshot}). The legacy
+ *     fields (`company`, `logoURL`, `logoExtendedURL`, `quote`, etc.)
+ *     stay populated so older iOS clients still parse the response.
+ *
+ * See SESSION-7-CODE-DELIVERY.md for the Worker patch.
  */
-async function syncCodesToKV(companyId: string, codes: string[]) {
+interface SyncCodesToKVParams {
+  companyId: string;
+  codes: string[];
+  company: {
+    name: string;
+    slug: string;
+    logoSymbolUrl: string | null;
+    logoExtendedUrl: string | null;
+    primaryColor: string | null;
+  } | null;
+  design: {
+    name: string | null;
+    snapshot: unknown;
+  } | null;
+}
+
+async function syncCodesToKV(params: SyncCodesToKVParams) {
   if (!env.PERENNE_API_SECRET) return;
 
   const timestamp = String(Date.now());
-  const signature = hmacSign(`${timestamp}:${companyId}`, env.PERENNE_API_SECRET);
+  const signature = hmacSign(`${timestamp}:${params.companyId}`, env.PERENNE_API_SECRET);
 
   await fetch(`${env.PERENNE_API_URL}/codes/sync`, {
     method: 'POST',
@@ -257,6 +335,12 @@ async function syncCodesToKV(companyId: string, codes: string[]) {
       'x-perenne-signature': signature,
       'x-perenne-timestamp': timestamp,
     },
-    body: JSON.stringify({ companyId, codes }),
+    body: JSON.stringify({
+      v: 2,
+      companyId: params.companyId,
+      codes: params.codes,
+      company: params.company,
+      design: params.design,
+    }),
   });
 }

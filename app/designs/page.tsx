@@ -44,6 +44,9 @@ export default async function DesignsPage() {
       backgroundColor: true,
       backgroundImageUrl: true,
       assetsJson: true,
+      // Pulled so we can render a representative page-watermark
+      // alongside the cover thumb in the library card.
+      pageWatermarksJson: true,
       createdAt: true,
       updatedAt: true,
       _count: { select: { orders: true } },
@@ -59,11 +62,9 @@ export default async function DesignsPage() {
     previewPngUrl: d.previewPngUrl,
     backgroundColor: d.backgroundColor,
     backgroundImageUrl: d.backgroundImageUrl,
-    // Send only the first asset for thumbnail purposes (lightweight payload)
     primaryAssetUrl: extractFirstAssetUrl(d.assetsJson),
+    primaryWatermarkUrl: extractFirstAssetUrl(d.pageWatermarksJson),
     orderCount: d._count.orders,
-    // Serialize Date → ISO string so the server-component-to-client boundary
-    // doesn't barf on Date instances.
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
   }));

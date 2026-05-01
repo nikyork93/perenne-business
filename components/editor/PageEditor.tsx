@@ -79,6 +79,7 @@ const SS_KEY = {
   pattern: 'perenne.page-editor.paper-pattern',
   scale: 'perenne.page-editor.paper-scale',
   defaultOpacity: 'perenne.page-editor.default-opacity',
+  spreadView: 'perenne.page-editor.spread-view',
 } as const;
 
 function ssGet(key: string): string | null {
@@ -173,6 +174,17 @@ export function PageEditor({
     const n = saved ? Number(saved) : NaN;
     return Number.isFinite(n) && n >= 0 && n <= 1 ? n : DEFAULT_OPACITY;
   });
+
+  // Spread view toggle — shows two pages side-by-side (left blank,
+  // right is the editable canvas) so the designer can see how the
+  // watermark sits in the context of an actual notebook spread.
+  // Local-only, persisted to sessionStorage.
+  const [spreadView, setSpreadView] = useState<boolean>(() => {
+    return ssGet(SS_KEY.spreadView) === '1';
+  });
+  useEffect(() => {
+    ssSet(SS_KEY.spreadView, spreadView ? '1' : '0');
+  }, [spreadView]);
 
   // Mirror state into sessionStorage so the next mount picks up the same values.
   useEffect(() => { ssSet(SS_KEY.hex, paperHex); }, [paperHex]);
@@ -548,9 +560,14 @@ export function PageEditor({
   const paperIsDark = isPaperDark(paperHex);
   const checkColor = paperIsDark ? '#ffffff' : '#0a0a0f';
 
-  // Page corner radius — left page of an open notebook: rounded only
-  // on the outer (left) edges; the spine side stays straight.
-  const PAGE_RADIUS = '14px 0 0 14px';
+  // Page corner radius — when shown alone or as right page of a spread:
+  // rounded only on the outer (right) edges; spine side stays straight.
+  // When shown as left page in a spread, mirror the radius.
+  const PAGE_RADIUS_RIGHT = '0 14px 14px 0';   // single page / right of spread
+  const PAGE_RADIUS_LEFT  = '14px 0 0 14px';   // left of spread (mirror)
+  // Backward compat — the existing canvas style uses PAGE_RADIUS still.
+  // We re-define to a sensible default for the editable canvas:
+  const PAGE_RADIUS = spreadView ? PAGE_RADIUS_RIGHT : '14px';
 
   return (
     <>
@@ -762,6 +779,42 @@ export function PageEditor({
             </p>
           </div>
 
+          {/* Spread view toggle ─────────────────────────────────── */}
+          <div>
+            <SectionLabel>View mode</SectionLabel>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => setSpreadView(false)}
+                aria-pressed={!spreadView}
+                className={`btn !p-2 !text-[10px] flex flex-col items-center gap-1 ${
+                  !spreadView ? 'bg-accent/15 border-accent/40 text-accent' : ''
+                }`}
+                title="Single page"
+              >
+                {/* mini icon: 1 page */}
+                <span style={{ display: 'inline-block', width: 14, height: 18, background: 'currentColor', opacity: 0.6, borderRadius: 2 }} />
+                Single
+              </button>
+              <button
+                type="button"
+                onClick={() => setSpreadView(true)}
+                aria-pressed={spreadView}
+                className={`btn !p-2 !text-[10px] flex flex-col items-center gap-1 ${
+                  spreadView ? 'bg-accent/15 border-accent/40 text-accent' : ''
+                }`}
+                title="Spread (2 pages)"
+              >
+                {/* mini icon: 2 pages */}
+                <span style={{ display: 'inline-flex', gap: 1 }}>
+                  <span style={{ display: 'inline-block', width: 10, height: 18, background: 'currentColor', opacity: 0.6, borderRadius: '2px 0 0 2px' }} />
+                  <span style={{ display: 'inline-block', width: 10, height: 18, background: 'currentColor', opacity: 0.6, borderRadius: '0 2px 2px 0' }} />
+                </span>
+                Spread
+              </button>
+            </div>
+          </div>
+
           {/* Quick position */}
           <div>
             <SectionLabel>Quick position</SectionLabel>
@@ -776,47 +829,78 @@ export function PageEditor({
           </div>
         </aside>
 
-        {/* ── CENTER: Single page preview ───────────────────── */}
+        {/* ── CENTER: Single page or spread preview ───────────── */}
         <main className="glass flex items-center justify-center relative overflow-hidden">
           <div
-            className="overflow-hidden"
+            className="flex items-stretch"
             style={{
-              borderRadius: PAGE_RADIUS,
               filter:
                 'drop-shadow(0 40px 80px rgba(0,0,0,0.35)) drop-shadow(0 12px 24px rgba(0,0,0,0.25))',
-              boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.08)',
             }}
           >
-            {/* Paper backdrop — paints colour + pattern under the
-                transparent Fabric canvas. Use `backgroundColor` (NOT
-                the `background` shorthand) so changing the colour
-                doesn't reset backgroundImage to none and silently kill
-                the pattern on the next render. */}
+            {/* Optional LEFT page (spread view only) — non-editable
+                mirror that shows just the paper colour + pattern, so
+                the user gets the spatial sense of a notebook spread.
+                Watermarks themselves are rendered only on the editable
+                right page; in the real notebook each page gets the same
+                watermark anyway, so the left page would visually echo
+                the right one — we keep it bare here to avoid drawing
+                the same watermark twice and confusing the user about
+                which one is being edited. */}
+            {spreadView && (
+              <div
+                style={{
+                  width: EDITOR_CANVAS_WIDTH,
+                  height: EDITOR_CANVAS_HEIGHT,
+                  backgroundColor: paperHex,
+                  backgroundImage: patternBg.backgroundImage,
+                  backgroundSize: patternBg.backgroundSize,
+                  backgroundRepeat: patternBg.backgroundRepeat,
+                  borderRadius: PAGE_RADIUS_LEFT,
+                  boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.08), inset -8px 0 12px -8px rgba(0,0,0,0.25)',
+                  overflow: 'hidden',
+                  position: 'relative',
+                }}
+                aria-hidden
+              />
+            )}
+
+            {/* RIGHT page (or single page when spread is off) —
+                contains the actual editable Fabric canvas. */}
             <div
+              className="overflow-hidden"
               style={{
-                width: EDITOR_CANVAS_WIDTH,
-                height: EDITOR_CANVAS_HEIGHT,
-                backgroundColor: paperHex,
-                backgroundImage: patternBg.backgroundImage,
-                backgroundSize: patternBg.backgroundSize,
-                backgroundRepeat: patternBg.backgroundRepeat,
-                position: 'relative',
+                borderRadius: PAGE_RADIUS,
+                boxShadow: spreadView
+                  ? 'inset 0 0 0 1px rgba(0,0,0,0.08), inset 8px 0 12px -8px rgba(0,0,0,0.25)'
+                  : 'inset 0 0 0 1px rgba(0,0,0,0.08)',
               }}
             >
-              <canvas
-                ref={canvasRef}
-                width={EDITOR_CANVAS_WIDTH}
-                height={EDITOR_CANVAS_HEIGHT}
-              />
+              <div
+                style={{
+                  width: EDITOR_CANVAS_WIDTH,
+                  height: EDITOR_CANVAS_HEIGHT,
+                  backgroundColor: paperHex,
+                  backgroundImage: patternBg.backgroundImage,
+                  backgroundSize: patternBg.backgroundSize,
+                  backgroundRepeat: patternBg.backgroundRepeat,
+                  position: 'relative',
+                }}
+              >
+                <canvas
+                  ref={canvasRef}
+                  width={EDITOR_CANVAS_WIDTH}
+                  height={EDITOR_CANVAS_HEIGHT}
+                />
+              </div>
             </div>
           </div>
 
-          {/* Caption pill — bumped contrast (white on darker pill) so
-              it reads in both themes. v21 used text-ink-faint which
-              became invisible on light theme over a dark-translucent
-              pill. */}
+          {/* Caption pill */}
           <div className="absolute bottom-5 left-1/2 -translate-x-1/2 font-mono text-[10px] tracking-[0.1em] text-white/85 py-1.5 px-3.5 bg-black/55 backdrop-blur border border-white/10 rounded-full whitespace-nowrap">
-            single page · 725×1000 ratio · applies to all pages except &ldquo;Property of&rdquo;
+            {spreadView
+              ? 'spread view · the right page is editable · all pages get the same watermark'
+              : 'single page · 725×1000 ratio · applies to all pages except “Property of”'}
           </div>
         </main>
 

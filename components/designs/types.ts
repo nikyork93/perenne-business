@@ -10,7 +10,10 @@ export interface DesignSummaryWithThumb
   extends Omit<DesignSummary, 'createdAt' | 'updatedAt'> {
   backgroundColor: string;
   backgroundImageUrl: string | null;
+  /** First cover asset URL — used for the cover thumb preview */
   primaryAssetUrl: string | null;
+  /** First page-watermark URL — used for the page thumb preview (right side of card) */
+  primaryWatermarkUrl: string | null;
   /** ISO-8601 — server pages serialize Dates to strings before sending */
   createdAt: string;
   updatedAt: string;

@@ -1,20 +1,34 @@
 import { EDITOR_CANVAS_HEIGHT, EDITOR_CANVAS_WIDTH } from '@/types/cover';
+import { isPaperDark } from '@/components/editor/paperPresets';
 
 /**
  * DesignThumbnail — pure HTML/CSS preview of a design.
  *
- * Renders the cover background + the primary logo in editor coords,
- * scaled to a thumbnail size. No Fabric, no canvas — same approach as
- * the LayoutTemplate thumbnails inside CoverEditor, just at a bigger
- * size and without click behaviour. Aspect ratio matches the editor
- * canvas so what the user sees on the design card matches what they
- * see in /designs/[id]/edit.
+ * Two modes:
+ *   - 'cover' (default): single panel showing background + primary cover logo
+ *   - 'spread'         : two panels side-by-side — cover on left, page on
+ *                        right (off-white iOS paper colour, with the primary
+ *                        watermark overlaid). Used in the library card so
+ *                        the user gets an at-a-glance overview of both
+ *                        sides of the design without opening the editor.
+ *
+ * No Fabric, no canvas. Same approach as the LayoutTemplate thumbnails
+ * inside CoverEditor — div + child <img> positioned via CSS transform.
  */
 interface DesignThumbnailProps {
   backgroundColor: string;
   backgroundImageUrl?: string | null;
   primaryAssetUrl?: string | null;
-  /** Width in pixels. Height is computed from canvas aspect ratio. */
+  /** Primary page watermark — first item from pageWatermarksJson */
+  primaryWatermarkUrl?: string | null;
+  /**
+   * Layout mode:
+   *   - 'cover'  : single panel (legacy behaviour)
+   *   - 'spread' : cover panel + page panel side-by-side, with a
+   *                hairline gap simulating the spine
+   */
+  mode?: 'cover' | 'spread';
+  /** Width of EACH panel in pixels. Height computed from canvas ratio. */
   width?: number;
   className?: string;
 }
@@ -23,49 +37,106 @@ export function DesignThumbnail({
   backgroundColor,
   backgroundImageUrl,
   primaryAssetUrl,
+  primaryWatermarkUrl,
+  mode = 'cover',
   width = 200,
   className,
 }: DesignThumbnailProps) {
-  // Canvas ratio (392 × 540 → ~0.725) — same as the editor canvas
   const ratio = EDITOR_CANVAS_HEIGHT / EDITOR_CANVAS_WIDTH;
   const height = Math.round(width * ratio);
 
+  // First iOS paper colour for the page panel preview. Local-only —
+  // page colour is editor-state, not part of the saved design.
+  const PAPER_HEX = '#FDFBF7';
+  const watermarkInverted = isPaperDark(PAPER_HEX); // false for off-white
+
+  function PagePanel({ borderRadius }: { borderRadius: string }) {
+    return (
+      <div
+        style={{
+          width,
+          height,
+          backgroundColor: PAPER_HEX,
+          position: 'relative',
+          overflow: 'hidden',
+          borderRadius,
+          flexShrink: 0,
+        }}
+      >
+        {primaryWatermarkUrl && (
+          <img
+            src={primaryWatermarkUrl}
+            alt=""
+            draggable={false}
+            style={{
+              position: 'absolute',
+              left: '50%',
+              top: '50%',
+              maxWidth: width * 0.4,
+              maxHeight: height * 0.4,
+              width: 'auto',
+              height: 'auto',
+              transform: 'translate(-50%, -50%)',
+              opacity: 0.55,
+              filter: watermarkInverted ? 'invert(1)' : undefined,
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  function CoverPanel({ borderRadius }: { borderRadius: string }) {
+    return (
+      <div
+        style={{
+          width,
+          height,
+          backgroundColor,
+          backgroundImage: backgroundImageUrl ? `url(${backgroundImageUrl})` : undefined,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          position: 'relative',
+          overflow: 'hidden',
+          borderRadius,
+          flexShrink: 0,
+        }}
+      >
+        {primaryAssetUrl && (
+          <img
+            src={primaryAssetUrl}
+            alt=""
+            draggable={false}
+            style={{
+              position: 'absolute',
+              left: '50%',
+              top: '50%',
+              maxWidth: width * 0.5,
+              maxHeight: height * 0.5,
+              width: 'auto',
+              height: 'auto',
+              transform: 'translate(-50%, -50%)',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (mode === 'spread') {
+    return (
+      <div className={className} style={{ display: 'inline-flex', gap: 1 }}>
+        <CoverPanel borderRadius="6px 0 0 6px" />
+        <PagePanel borderRadius="0 6px 6px 0" />
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={className}
-      style={{
-        width,
-        height,
-        backgroundColor,
-        backgroundImage: backgroundImageUrl ? `url(${backgroundImageUrl})` : undefined,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        position: 'relative',
-        overflow: 'hidden',
-        borderRadius: 8,
-      }}
-    >
-      {primaryAssetUrl && (
-        <img
-          src={primaryAssetUrl}
-          alt=""
-          draggable={false}
-          style={{
-            position: 'absolute',
-            // Default placement: center, half the thumb width — gives a
-            // sensible hint of the brand even when we don't have full
-            // assetsJson with positions. Edit page shows the real layout.
-            left: '50%',
-            top: '50%',
-            maxWidth: width * 0.5,
-            maxHeight: height * 0.5,
-            width: 'auto',
-            height: 'auto',
-            transform: 'translate(-50%, -50%)',
-            pointerEvents: 'none',
-          }}
-        />
-      )}
+    <div className={className}>
+      <CoverPanel borderRadius="8px" />
     </div>
   );
 }

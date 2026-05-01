@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { GlassPanel, Button, Badge, Whisper } from '@/components/ui';
 import { DesignThumbnail } from '@/components/designs/DesignThumbnail';
+import { InlineDesignName } from '@/components/designs/InlineDesignName';
 import type { DesignSummaryWithThumb } from '@/components/designs/types';
 
 interface DesignsListProps {
@@ -130,7 +131,10 @@ export function DesignsList({ initialDesigns, canEdit }: DesignsListProps) {
           return (
             <GlassPanel key={d.id} padding="md" animate>
               <div className="flex flex-col gap-3">
-                {/* Thumbnail */}
+                {/* Spread thumbnail — cover on left + page on right.
+                    Each panel half the available width, so the spread
+                    fits the same horizontal space as the old single
+                    cover thumb. Wrapped in a Link for click-to-edit. */}
                 <Link
                   href={`/designs/${d.id}/edit`}
                   className="block relative group"
@@ -140,20 +144,29 @@ export function DesignsList({ initialDesigns, canEdit }: DesignsListProps) {
                     backgroundColor={d.backgroundColor}
                     backgroundImageUrl={d.backgroundImageUrl}
                     primaryAssetUrl={d.primaryAssetUrl}
-                    width={280}
-                    className="w-full h-auto"
+                    primaryWatermarkUrl={d.primaryWatermarkUrl}
+                    mode="spread"
+                    width={140}
                   />
                   <div className="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100 transition bg-black/30 flex items-center justify-center">
                     <span className="text-xs font-mono text-white">Edit →</span>
                   </div>
                 </Link>
 
-                {/* Header: name + default badge */}
+                {/* Header: editable name + default badge.
+                    Name uses InlineDesignName so user can rename right
+                    here without going into the editor. The button-y
+                    InlineDesignName eats clicks so the surrounding
+                    card link doesn't fire when the name is clicked. */}
                 <div className="flex items-start justify-between gap-2 min-w-0">
                   <div className="min-w-0 flex-1">
-                    <h3 className="font-display italic text-lg leading-tight truncate">
-                      {d.name}
-                    </h3>
+                    <div className="font-display italic text-lg leading-tight">
+                      <InlineDesignName
+                        designId={d.id}
+                        initialName={d.name}
+                        className="font-display italic text-lg leading-tight"
+                      />
+                    </div>
                     <p className="mt-1 text-[10px] text-ink-faint font-mono">
                       {(d.orderCount ?? 0)} order{(d.orderCount ?? 0) === 1 ? '' : 's'}
                       {' · '}

@@ -1,29 +1,26 @@
 /**
- * paperPresets.ts — v21
+ * paperPresets.ts — v28
  *
  * Local-only paper preview helpers for the page editor. Nothing here is
  * persisted to the DB or to the iOS notebook config — this is a "feel"
  * preview so the user can design watermarks against a representative
  * paper background.
  *
- * The pattern engine intentionally mirrors the iOS implementation
- * (Perenne Note / PaperPatterns.swift) so what you see here matches
- * what the user will see in the actual notebook:
+ * The palette is now EXACTLY the 4 colours that ship in Perenne Note
+ * iOS today (see Toolbar/CustomToolbar.swift line 58):
  *
- *   - paper types: BLANK / RULED / GRID / DOTS
- *   - base spacing: 24pt at 725pt page width  →  ~13px at our 392px
- *     editor canvas (24 × 392/725 ≈ 12.97). We round to 13.
- *   - line width: 1.5
- *   - dot diameter: 2.5 (iOS uses dotSize 1.75 × 1.4 = 2.45 effective)
- *   - line/dot color uses iOS alpha values:
- *       light: black @ 0.08 (line), black @ 0.22 (dot)
- *       dark : white @ 0.25 (line), white @ 0.35 (dot)
- *   - dark/light decision via the same luminance formula iOS uses:
- *       (0.299*R + 0.587*G + 0.114*B) / 255 < 0.5
+ *   "#FDFBF7"  — off-white (default in Perenne Note)
+ *   "#F5F5DC"  — beige
+ *   "#27272a"  — charcoal
+ *   "#1e293b"  — navy
  *
- * The 8 presets include all 4 colors that ship in the iOS app today
- * (FDFBF7, F5F5DC, 27272a, 1e293b — see CustomToolbar.swift) plus four
- * extras for variety in the editor preview only.
+ * Pattern stroke alphas REDUCED 20% from iOS values per user feedback
+ * — the editor preview was too "shouty" relative to the actual app:
+ *
+ *   light:  line 0.08 → 0.064   |   dot 0.22 → 0.176
+ *   dark :  line 0.25 → 0.20    |   dot 0.35 → 0.28
+ *
+ * Other constants (spacing, line width, dot diameter) match iOS 1:1.
  */
 
 export type PaperPattern = 'BLANK' | 'RULED' | 'GRID' | 'DOTS';
@@ -34,41 +31,29 @@ export interface PaperPreset {
 }
 
 /**
- * 8-preset palette. Default (index 0) is a warm cream that reads as
- * "real paper" without being yellow enough to fight watermark colors.
+ * 4-preset palette — IDENTICAL to the iOS app. Order matches the
+ * paperColors array in CustomToolbar.swift so the editor experience
+ * is consistent with what the user sees on iPad.
  */
 export const PAPER_PRESETS: readonly PaperPreset[] = [
-  { name: 'Cream', hex: '#FAF7E8' },        // default — warm off-white
-  { name: 'Off-white', hex: '#FDFBF7' },    // iOS paper #1 (default in Perenne Note)
-  { name: 'Beige', hex: '#F5F5DC' },        // iOS paper #2
-  { name: 'White', hex: '#FFFFFF' },        // pure white
-  { name: 'Ivory', hex: '#F4EAD5' },        // aged ivory
-  { name: 'Parchment', hex: '#E8DCC4' },    // old paper
-  { name: 'Charcoal', hex: '#27272A' },     // iOS paper #3 — dark
-  { name: 'Navy', hex: '#1E293B' },         // iOS paper #4 — dark
+  { name: 'Off-white', hex: '#FDFBF7' },
+  { name: 'Beige',     hex: '#F5F5DC' },
+  { name: 'Charcoal',  hex: '#27272A' },
+  { name: 'Navy',      hex: '#1E293B' },
 ] as const;
 
-export const DEFAULT_PAPER_HEX = '#FAF7E8';
+export const DEFAULT_PAPER_HEX = '#FDFBF7';
 export const DEFAULT_PAPER_PATTERN: PaperPattern = 'BLANK';
 export const DEFAULT_PAPER_SCALE = 1.0;
 
 // ─── Pattern-engine constants (mirror iOS) ───────────────────────────
 
-/**
- * Editor canvas is 392px wide vs the iOS notebook page at 725pt. To make
- * the pattern scale match what the user will see in-app at 1.0x, we
- * pre-scale the iOS base spacing by 392/725. Result: 24 * 0.5407 ≈ 13.
- */
 const BASE_SPACING = 13;
 const LINE_WIDTH = 1.5;
 const DOT_DIAMETER = 2.5;
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-/**
- * Returns true if the given paper color is "dark" (perceived luminance
- * below 0.5). Same formula as iOS so dark-paper detection matches.
- */
 export function isPaperDark(hex: string): boolean {
   const clean = hex.replace('#', '').trim();
   if (clean.length !== 6) return false;
@@ -79,19 +64,10 @@ export function isPaperDark(hex: string): boolean {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5;
 }
 
-/**
- * Encode a string as base64 — works in browser and SSR.
- * Used to inline the SVG tile as a data URL.
- */
 function toBase64(s: string): string {
   if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
-    // unescape/encodeURIComponent dance to handle multi-byte chars safely.
-    // Our SVG is pure ASCII so a direct btoa is also safe — keeping the
-    // robust form in case a future preset name leaks into the tile.
     return window.btoa(unescape(encodeURIComponent(s)));
   }
-  // SSR fallback (this module is imported by client components but Next
-  // may still bundle it during prerender).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const B = (globalThis as any).Buffer;
   if (B && typeof B.from === 'function') {
@@ -103,21 +79,14 @@ function toBase64(s: string): string {
 // ─── Pattern background builder ──────────────────────────────────────
 
 export interface PatternBackgroundCSS {
-  /** CSS background-image value (data URL) — undefined for BLANK. */
   backgroundImage?: string;
-  /** CSS background-size value (e.g. "13px 13px") — undefined for BLANK. */
   backgroundSize?: string;
-  /** Make BLANK explicit so callers can `style={{ backgroundImage: 'none', ...result }}`. */
   backgroundRepeat?: string;
 }
 
 /**
  * Build a CSS-ready background for the paper-preview backdrop.
- *
- * @param pattern  Pattern type (BLANK is a no-op).
- * @param paperHex Paper color — used only to pick light vs dark stroke.
- *                 The actual paper *fill* is set separately by the caller.
- * @param scale    Scale factor (1 = 100%). Bounded internally to [0.1, 10].
+ * Stroke alphas are 20% softer than iOS — see file header.
  */
 export function buildPatternBackground(
   pattern: PaperPattern,
@@ -126,18 +95,18 @@ export function buildPatternBackground(
 ): PatternBackgroundCSS {
   if (pattern === 'BLANK') return {};
 
-  // Bound scale to avoid degenerate/exploding tile sizes
   const s = Math.max(0.1, Math.min(10, scale));
   const sp = +(BASE_SPACING * s).toFixed(2);
   const dark = isPaperDark(paperHex);
 
-  const lineColor = dark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.08)';
-  const dotColor = dark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.22)';
+  // Reduced 20% from iOS values per user feedback (patterns felt too
+  // prominent in the editor preview).
+  const lineColor = dark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.064)';
+  const dotColor  = dark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.176)';
 
   let inner = '';
 
   if (pattern === 'RULED') {
-    // Single horizontal line at the bottom of the tile (matches iOS).
     const y = +(sp - LINE_WIDTH / 2).toFixed(2);
     inner = `<line x1="0" y1="${y}" x2="${sp}" y2="${y}" stroke="${lineColor}" stroke-width="${LINE_WIDTH}"/>`;
   } else if (pattern === 'GRID') {

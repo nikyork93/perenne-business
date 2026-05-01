@@ -562,6 +562,22 @@ export function CoverEditor({
     } else {
       img.filters = [];
     }
+    // ─── Cache invalidation ────────────────────────────────────────
+    // Fabric.js 5.x has a known issue where applyFilters() doesn't
+    // always re-process the cached canvas when the filters array is
+    // mutated in place (especially after the FIRST application — the
+    // filter pipeline gets cached and subsequent images reuse stale
+    // pipeline state). The symptom: invert works on the first image
+    // but silently fails on subsequent images.
+    //
+    // Fix: explicitly invalidate the cached canvas + cacheKey before
+    // reapplying. This forces Fabric to re-walk the filter pipeline
+    // for THIS image instead of reusing a sibling's cache.
+    img.dirty = true;
+    if (img._element && img._originalElement) {
+      img._element = img._originalElement;
+    }
+    img.cacheKey = `${img.perenneAssetId ?? 'x'}_${inverted ? 'inv' : 'orig'}_${Date.now()}`;
     img.applyFilters?.();
   }
 
