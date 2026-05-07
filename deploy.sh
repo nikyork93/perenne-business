@@ -3,97 +3,69 @@ set -e
 cd "$(dirname "$0")"
 
 echo "═══════════════════════════════════════════════════════════"
-echo "v33 — Codes system + invert color fix"
+echo "v34 — Codes session 2: bulk + CSV + email + revoke/restore"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 echo "Cosa fa:"
-echo "  1. Schema Prisma: NotebookCode supporta orderId NULL +"
-echo "     designId diretto + batchLabel + assignedAt"
-echo "  2. Nuovo /api/admin/codes/batch (superadmin crea batch)"
-echo "  3. Nuovo /api/codes/[id]/assign (company assegna a email)"
-echo "  4. Aggiornato /api/codes (filtra per batchLabel, ritorna designId diretto)"
-echo "  5. Aggiornato /api/team/[code] (legge designId diretto da NotebookCode)"
-echo "  6. Nuova pagina /admin/codes (lista batch superadmin)"
-echo "  7. Nuova pagina /admin/codes/new (crea batch)"
-echo "  8. Aggiornata pagina /codes (lista codici company + bottone Assign)"
-echo "  9. Sidebar: aggiunta voce 'Code batches' in superadmin"
-echo " 10. Bug invert color: fix in CoverEditor (objectCaching=false)"
+echo "  1. Nuovo /api/codes/bulk-assign (assegna N codici a N email"
+echo "     in una transazione, da CSV o lista)"
+echo "  2. Nuovo /api/codes/distribute (manda email Resend ai codici"
+echo "     assegnati, traccia in EmailLog)"
+echo "  3. Nuovo /api/codes/[id]/revoke (revoca codice)"
+echo "  4. Nuovo /api/codes/[id]/restore (ripristina codice revocato)"
+echo "  5. Nuovo lib/code-email-template.ts (template email codice)"
+echo "  6. Aggiornata CodesTable: checkbox selezione, filtro batch,"
+echo "     bottone Import CSV, bottone Send emails, Revoke/Restore"
 echo ""
 echo "Premi INVIO per continuare, Ctrl+C per annullare."
 read -r _
 
 echo "═══════════════════════════════════════════════════════════"
-echo "STEP 1/5: copia file"
+echo "STEP 1/3: copia file"
 echo "═══════════════════════════════════════════════════════════"
-mkdir -p prisma app/codes app/admin/codes app/admin/codes/new
-mkdir -p app/api/admin/codes/batch
-mkdir -p app/api/codes/\[id\]/assign
-mkdir -p components/admin components/editor components/layout
+mkdir -p lib components
+mkdir -p app/api/codes/bulk-assign
+mkdir -p app/api/codes/distribute
+mkdir -p app/api/codes/\[id\]/revoke
+mkdir -p app/api/codes/\[id\]/restore
 
-cp -v _v33_payload/prisma/schema.prisma prisma/schema.prisma
-cp -v _v33_payload/app/api/admin/codes/batch/route.ts app/api/admin/codes/batch/route.ts
-cp -v "_v33_payload/app/api/codes/[id]/assign/route.ts" "app/api/codes/[id]/assign/route.ts"
-cp -v _v33_payload/app/api/codes/route.ts app/api/codes/route.ts
-cp -v "_v33_payload/app/api/team/[code]/route.ts" "app/api/team/[code]/route.ts"
-cp -v _v33_payload/app/codes/page.tsx app/codes/page.tsx
-cp -v _v33_payload/app/admin/codes/page.tsx app/admin/codes/page.tsx
-cp -v _v33_payload/app/admin/codes/new/page.tsx app/admin/codes/new/page.tsx
-cp -v _v33_payload/components/CodesTable.tsx components/CodesTable.tsx
-cp -v _v33_payload/components/admin/NewBatchForm.tsx components/admin/NewBatchForm.tsx
-cp -v _v33_payload/components/editor/CoverEditor.tsx components/editor/CoverEditor.tsx
-cp -v _v33_payload/components/layout/Shell.tsx components/layout/Shell.tsx
+cp -v _v34_payload/lib/code-email-template.ts lib/code-email-template.ts
+cp -v _v34_payload/components/CodesTable.tsx components/CodesTable.tsx
+cp -v _v34_payload/app/api/codes/bulk-assign/route.ts app/api/codes/bulk-assign/route.ts
+cp -v _v34_payload/app/api/codes/distribute/route.ts app/api/codes/distribute/route.ts
+cp -v "_v34_payload/app/api/codes/[id]/revoke/route.ts" "app/api/codes/[id]/revoke/route.ts"
+cp -v "_v34_payload/app/api/codes/[id]/restore/route.ts" "app/api/codes/[id]/restore/route.ts"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "STEP 2/5: prisma db push (applica schema su Neon)"
+echo "STEP 2/3: cleanup payload"
 echo "═══════════════════════════════════════════════════════════"
-npx prisma db push
-echo "  OK"
+rm -rf _v34_payload
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "STEP 3/5: prisma generate (rebuild types)"
-echo "═══════════════════════════════════════════════════════════"
-npx prisma generate
-echo "  OK"
-
-echo ""
-echo "═══════════════════════════════════════════════════════════"
-echo "STEP 4/5: cleanup payload"
-echo "═══════════════════════════════════════════════════════════"
-rm -rf _v33_payload
-echo "  OK"
-
-echo ""
-echo "═══════════════════════════════════════════════════════════"
-echo "STEP 5/5: git commit + push"
+echo "STEP 3/3: git commit + push"
 echo "═══════════════════════════════════════════════════════════"
 git add -A
-git commit -m "v33: codes system (manual batches) + invert color fix"
+git commit -m "v34: codes bulk-assign + distribute + revoke/restore + CSV import"
 git push
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "FATTO! Vercel sta facendo build (60-90s)."
+echo "FATTO! Vercel deploy ~60-90s."
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Test post-deploy:"
-echo "  1. Login a business.perenne.app"
-echo "  2. Vai a /admin/codes -> dovresti vedere lista vuota + bottone 'New batch'"
-echo "  3. Click 'New batch':"
-echo "     - Company: Stelvio Collection"
-echo "     - Design: (qualsiasi tuo design, opzionale)"
-echo "     - Number of codes: 5"
-echo "     - Batch label: Test batch May 2026"
-echo "     -> Submit"
-echo "  4. Vai a /codes -> vedi 5 codici nuovi con il batch label"
-echo "  5. Click 'Assign' su uno -> assegnalo a una mail di test"
-echo "  6. Test API: curl https://business.perenne.app/api/team/<CODE>"
-echo "     -> dovrebbe rispondere 200 con company + design snapshot"
+echo "Test post-deploy (dopo che v33 e' gia' deployato):"
 echo ""
-echo "Test bug invert color:"
-echo "  1. Vai in editor di un design"
-echo "  2. Carica logo STELVIO collection (il completo, ratio largo)"
-echo "  3. Click Invert color"
-echo "  4. Verifica che NON sia troncato a 'STEL collec'"
+echo "  1. Vai a /codes -> vedi nuovi bottoni 'Import CSV' e 'Send emails'"
+echo "  2. Click 'Import CSV' -> incolla:"
+echo "       email,name"
+echo "       test1@example.com,Mario"
+echo "       test2@example.com,Luisa"
+echo "     -> Click 'Assign codes' -> vedi 2 codici assegnati"
+echo "  3. Seleziona checkbox sui codici assegnati"
+echo "  4. Click 'Send emails' -> conferma -> dovrebbe mostrare 'sent: 2'"
+echo "     (in dev senza RESEND_API_KEY logga in console di Vercel)"
+echo "  5. Test Revoke su un codice -> dovrebbe diventare REVOKED"
+echo "  6. Test Restore sullo stesso -> torna AVAILABLE"
 echo ""
