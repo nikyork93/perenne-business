@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Shell } from '@/components/layout/Shell';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { Button, GlassPanel, Badge } from '@/components/ui';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
@@ -13,7 +14,6 @@ export default async function AdminCodesPage() {
     redirect('/dashboard');
   }
 
-  // Aggregate by batchLabel + companyId
   const batches = await prisma.notebookCode.groupBy({
     by: ['companyId', 'batchLabel', 'designId'],
     _count: { _all: true },
@@ -35,7 +35,12 @@ export default async function AdminCodesPage() {
       where: { id: { in: companyIds } },
       select: { id: true, name: true, slug: true },
     }),
-    designs_lookup(designIds),
+    designIds.length > 0
+      ? prisma.design.findMany({
+          where: { id: { in: designIds } },
+          select: { id: true, name: true, isArchived: true },
+        })
+      : Promise.resolve([]),
     prisma.notebookCode.groupBy({
       by: ['companyId', 'batchLabel', 'status'],
       _count: { _all: true },
@@ -59,22 +64,17 @@ export default async function AdminCodesPage() {
 
   return (
     <Shell userEmail={session.email} isSuperAdmin>
-      <div className="max-w-7xl mx-auto p-8 space-y-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-ink-faint font-mono mb-2">
-              Superadmin · Codes
-            </div>
-            <h1 className="text-3xl font-light text-ink">Code batches</h1>
-            <p className="text-sm text-ink-dim mt-2 max-w-2xl">
-              Manually-issued NotebookCode batches per company. Each batch can
-              be linked to a Design.
-            </p>
-          </div>
-          <Link href="/admin/codes/new">
-            <Button variant="primary">+ New batch</Button>
-          </Link>
-        </div>
+      <div className="max-w-7xl mx-auto p-8">
+        <PageHeader
+          eyebrow="Superadmin · Codes"
+          title="Code batches"
+          description="Manually-issued NotebookCode batches per company. Each batch can be linked to a Design."
+          actions={
+            <Link href="/admin/codes/new">
+              <Button variant="primary">+ New batch</Button>
+            </Link>
+          }
+        />
 
         <GlassPanel className="overflow-hidden">
           {batches.length === 0 ? (
@@ -84,7 +84,7 @@ export default async function AdminCodesPage() {
             </div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="bg-surface-2/50 text-[10px] uppercase tracking-[0.2em] text-ink-faint font-mono">
+              <thead className="bg-surface-faint text-[10px] uppercase tracking-[0.2em] text-ink-faint font-mono">
                 <tr>
                   <th className="text-left px-4 py-3">Created</th>
                   <th className="text-left px-4 py-3">Company</th>
@@ -108,7 +108,7 @@ export default async function AdminCodesPage() {
                   return (
                     <tr
                       key={i}
-                      className="border-t border-divider hover:bg-surface-2/30"
+                      className="border-t border-border-subtle hover:bg-surface-hover"
                     >
                       <td className="px-4 py-3 text-ink-dim text-xs">
                         {b._min.createdAt
@@ -156,12 +156,4 @@ export default async function AdminCodesPage() {
       </div>
     </Shell>
   );
-}
-
-async function designs_lookup(ids: string[]) {
-  if (ids.length === 0) return [];
-  return prisma.design.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, name: true, isArchived: true },
-  });
 }

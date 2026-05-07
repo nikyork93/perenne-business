@@ -110,7 +110,7 @@ export function NewBatchForm({ companies, designs }: NewBatchFormProps) {
           <select
             value={companyId}
             onChange={(e) => handleCompanyChange(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-input-bg border border-input-border text-ink"
+            className="w-full px-3 py-2 rounded-md bg-glass-bg border border-glass-border text-ink"
           >
             <option value="">— select —</option>
             {companies.map((c) => (
@@ -129,7 +129,7 @@ export function NewBatchForm({ companies, designs }: NewBatchFormProps) {
             value={designId}
             onChange={(e) => setDesignId(e.target.value)}
             disabled={!companyId}
-            className="w-full px-3 py-2 rounded-md bg-input-bg border border-input-border text-ink disabled:opacity-50"
+            className="w-full px-3 py-2 rounded-md bg-glass-bg border border-glass-border text-ink disabled:opacity-50"
           >
             <option value="">— none (codes carry company default) —</option>
             {companyDesigns.map((d) => (
@@ -183,7 +183,7 @@ export function NewBatchForm({ companies, designs }: NewBatchFormProps) {
             placeholder="e.g. Free batch for partner trade show"
             maxLength={500}
             rows={2}
-            className="w-full px-3 py-2 rounded-md bg-input-bg border border-input-border text-ink text-sm"
+            className="w-full px-3 py-2 rounded-md bg-glass-bg border border-glass-border text-ink text-sm"
           />
         </div>
       </GlassPanel>

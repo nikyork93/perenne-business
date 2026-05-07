@@ -44,6 +44,10 @@ export default function LoginPage() {
 
   return (
     <main
+      // Login page always renders against a dark gradient background, so we
+      // force dark text/border tokens regardless of the user's current theme
+      // (otherwise light-mode users see black text on dark glass = invisible).
+      data-theme="dark"
       className="min-h-screen flex items-center justify-center p-6 text-ink relative overflow-hidden"
       style={{
         background: `

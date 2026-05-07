@@ -201,7 +201,7 @@ export function CodesTable() {
                 setStatus(e.target.value as CodeStatus | '');
                 setPage(1);
               }}
-              className="px-3 py-2 rounded-md bg-input-bg border border-input-border text-ink text-sm"
+              className="px-3 py-2 rounded-md bg-glass-bg border border-glass-border text-ink text-sm"
             >
               <option value="">All</option>
               <option value="AVAILABLE">Available</option>
@@ -220,7 +220,7 @@ export function CodesTable() {
                   setBatchFilter(e.target.value);
                   setPage(1);
                 }}
-                className="px-3 py-2 rounded-md bg-input-bg border border-input-border text-ink text-sm"
+                className="px-3 py-2 rounded-md bg-glass-bg border border-glass-border text-ink text-sm"
               >
                 <option value="">All batches</option>
                 {batchLabels.map((b) => (
@@ -246,7 +246,7 @@ export function CodesTable() {
           </div>
         </div>
         {hasSelection && (
-          <div className="mt-3 pt-3 border-t border-divider flex items-center gap-3 text-xs text-ink-dim">
+          <div className="mt-3 pt-3 border-t border-border-subtle flex items-center gap-3 text-xs text-ink-dim">
             <span>{selected.size} selected</span>
             <button
               onClick={() => setSelected(new Set())}
@@ -274,7 +274,7 @@ export function CodesTable() {
           </div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-surface-2/50 text-[10px] uppercase tracking-[0.2em] text-ink-faint font-mono">
+            <thead className="bg-surface-faint text-[10px] uppercase tracking-[0.2em] text-ink-faint font-mono">
               <tr>
                 <th className="text-left px-3 py-3 w-8">
                   <input
@@ -297,8 +297,8 @@ export function CodesTable() {
               {codes.map((c) => (
                 <tr
                   key={c.id}
-                  className={`border-t border-divider hover:bg-surface-2/30 ${
-                    selected.has(c.id) ? 'bg-surface-2/20' : ''
+                  className={`border-t border-border-subtle hover:bg-surface-hover ${
+                    selected.has(c.id) ? 'bg-surface-hover' : ''
                   }`}
                 >
                   <td className="px-3 py-3">
@@ -392,7 +392,7 @@ export function CodesTable() {
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page === 1}
-            className="px-3 py-1 rounded border border-divider disabled:opacity-30"
+            className="px-3 py-1 rounded border border-border-subtle disabled:opacity-30"
           >
             ← Prev
           </button>
@@ -402,7 +402,7 @@ export function CodesTable() {
           <button
             onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
             disabled={page === pagination.totalPages}
-            className="px-3 py-1 rounded border border-divider disabled:opacity-30"
+            className="px-3 py-1 rounded border border-border-subtle disabled:opacity-30"
           >
             Next →
           </button>
@@ -639,7 +639,7 @@ function CsvImportDialog({
             <select
               value={batchLabel}
               onChange={(e) => setBatchLabel(e.target.value)}
-              className="w-full px-3 py-2 rounded-md bg-input-bg border border-input-border text-ink text-sm"
+              className="w-full px-3 py-2 rounded-md bg-glass-bg border border-glass-border text-ink text-sm"
             >
               <option value="">Any batch</option>
               {batchLabels.map((b) => (
@@ -662,7 +662,7 @@ mario@acme.com,Mario Rossi
 luisa@acme.com,Luisa Bianchi
 ...`}
             rows={10}
-            className="w-full px-3 py-2 rounded-md bg-input-bg border border-input-border text-ink text-sm font-mono"
+            className="w-full px-3 py-2 rounded-md bg-glass-bg border border-glass-border text-ink text-sm font-mono"
           />
         </div>
         {error && (
@@ -779,7 +779,7 @@ function DistributeDialog({
           placeholder="e.g. Welcome to the team! Use this code to set up your iPad notebook."
           rows={3}
           maxLength={500}
-          className="w-full px-3 py-2 rounded-md bg-input-bg border border-input-border text-ink text-sm"
+          className="w-full px-3 py-2 rounded-md bg-glass-bg border border-glass-border text-ink text-sm"
         />
         <div className="text-[10px] text-ink-faint mt-1">
           Appears as a quoted line at the top of the email.
@@ -817,14 +817,19 @@ function Modal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-md"
       onClick={onClose}
     >
       <div
-        className={`bg-surface-1 border border-divider rounded-lg p-6 w-full ${
-          wide ? 'max-w-2xl' : 'max-w-md'
-        }`}
+        className={`rounded-2xl p-6 w-full ${wide ? 'max-w-2xl' : 'max-w-md'}`}
         onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--glass-bg-hi)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          border: '1px solid var(--glass-hairline)',
+          boxShadow: 'var(--shadow-card)',
+        }}
       >
         {children}
       </div>

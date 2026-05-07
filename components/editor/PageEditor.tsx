@@ -340,9 +340,11 @@ export function PageEditor({
           });
 
           if (restore?.invert) {
-            const f = makeFillColorFilter(fabricLib, '#ffffff');
-            img.filters = f ? [f] : [];
-            img.applyFilters?.();
+            // v35: defer to applyInvertedToObject (uses canvas2d, no WebGL cap)
+            queueMicrotask(() => {
+              applyInvertedToObject(img, true);
+              canvas.requestRenderAll?.();
+            });
           }
 
           canvas.add(img);
@@ -414,20 +416,11 @@ export function PageEditor({
 
   function toggleInvert() {
     const canvas = fabricCanvasRef.current;
-    const fabricLib = window.fabric;
-    if (!canvas || !fabricLib || !activeObj) return;
+    if (!canvas || !activeObj) return;
 
     const isInverted = !activeObj.perenneInverted;
-    activeObj.perenneInverted = isInverted;
-
-    if (isInverted) {
-      const f = makeFillColorFilter(fabricLib, '#ffffff');
-      activeObj.filters = f ? [f] : [];
-    } else {
-      activeObj.filters = [];
-    }
-    activeObj.applyFilters?.();
-    canvas.renderAll();
+    applyInvertedToObject(activeObj, isInverted);
+    canvas.requestRenderAll();
 
     setAssets((prev) =>
       prev.map((a) =>
@@ -435,6 +428,50 @@ export function PageEditor({
       )
     );
     setSelTick((t) => t + 1);
+  }
+
+  // ─── Manual invert helper (v35) — see CoverEditor for rationale ───
+  function buildInvertedElement(orig: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement {
+    const w = (orig as HTMLImageElement).naturalWidth || orig.width;
+    const h = (orig as HTMLImageElement).naturalHeight || orig.height;
+    const out = document.createElement('canvas');
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext('2d');
+    if (!ctx) return out;
+    ctx.drawImage(orig as CanvasImageSource, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h);
+    const px = data.data;
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3] > 0) {
+        px[i] = 255;
+        px[i + 1] = 255;
+        px[i + 2] = 255;
+      }
+    }
+    ctx.putImageData(data, 0, 0);
+    return out;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function applyInvertedToObject(img: any, inverted: boolean) {
+    img.perenneInverted = inverted;
+    img.filters = [];
+    if (inverted) {
+      if (!img._perenneInvertedEl && img._originalElement) {
+        img._perenneInvertedEl = buildInvertedElement(img._originalElement);
+      }
+      if (img._perenneInvertedEl) {
+        img._element = img._perenneInvertedEl;
+      }
+    } else if (img._originalElement) {
+      img._element = img._originalElement;
+    }
+    img.dirty = true;
+    img.objectCaching = false;
+    img.statefullCache = false;
+    img.cacheKey = `${img.perenneAssetId ?? 'x'}_${inverted ? 'inv' : 'orig'}_${Date.now()}`;
+    img.setCoords?.();
   }
 
   function updateActive(patch: Record<string, number>) {
@@ -656,11 +693,33 @@ export function PageEditor({
                   <button
                     key={o}
                     type="button"
-                    onClick={() => setDefaultOpacity(o)}
+                    onClick={() => {
+                      // v35: always store the new default for new uploads,
+                      // AND if a watermark is currently selected, apply the
+                      // opacity to it immediately (otherwise these buttons
+                      // are confusing — the user expects them to "do something").
+                      setDefaultOpacity(o);
+                      if (activeObj) {
+                        updateActive({ opacity: o });
+                        setAssets((prev) =>
+                          prev.map((a) =>
+                            a.id === activeObj.perenneAssetId
+                              ? { ...a, opacity: o }
+                              : a
+                          )
+                        );
+                        setSelTick((t) => t + 1);
+                      }
+                    }}
                     className={`btn !justify-center !text-[11px] !py-2 !px-1 ${
                       active ? '!bg-accent/15 !border-accent !text-accent' : ''
                     }`}
                     aria-pressed={active}
+                    title={
+                      activeObj
+                        ? `Set opacity to ${Math.round(o * 100)}% for the selected watermark and use this default for new uploads`
+                        : `Use ${Math.round(o * 100)}% as default opacity for new watermark uploads`
+                    }
                   >
                     {Math.round(o * 100)}%
                   </button>
@@ -668,7 +727,7 @@ export function PageEditor({
               })}
             </div>
             <p className="mt-2 text-[9px] text-ink-faint leading-relaxed font-mono">
-              Applied to new uploads. Per-watermark control in the right panel.
+              Applies to the selected watermark (if any) and to new uploads.
             </p>
           </div>
 

@@ -146,7 +146,7 @@ export function DesignsList({ initialDesigns, canEdit }: DesignsListProps) {
                     primaryAssetUrl={d.primaryAssetUrl}
                     primaryWatermarkUrl={d.primaryWatermarkUrl}
                     mode="spread"
-                    width={140}
+                    width={200}
                   />
                   <div className="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100 transition bg-black/30 flex items-center justify-center">
                     <span className="text-xs font-mono text-white">Edit →</span>

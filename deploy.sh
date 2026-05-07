@@ -3,69 +3,65 @@ set -e
 cd "$(dirname "$0")"
 
 echo "═══════════════════════════════════════════════════════════"
-echo "v34 — Codes session 2: bulk + CSV + email + revoke/restore"
+echo "v35 — UI fixes + invert color rewrite"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Cosa fa:"
-echo "  1. Nuovo /api/codes/bulk-assign (assegna N codici a N email"
-echo "     in una transazione, da CSV o lista)"
-echo "  2. Nuovo /api/codes/distribute (manda email Resend ai codici"
-echo "     assegnati, traccia in EmailLog)"
-echo "  3. Nuovo /api/codes/[id]/revoke (revoca codice)"
-echo "  4. Nuovo /api/codes/[id]/restore (ripristina codice revocato)"
-echo "  5. Nuovo lib/code-email-template.ts (template email codice)"
-echo "  6. Aggiornata CodesTable: checkbox selezione, filtro batch,"
-echo "     bottone Import CSV, bottone Send emails, Revoke/Restore"
+echo "Fix:"
+echo "  1. Login: forza dark theme (data-theme=dark) cosi i testi"
+echo "     restano leggibili anche con sistema in light mode"
+echo "  2. Invert color: rewrite con canvas2D manuale (bypassa il"
+echo "     limite WebGL maxTextureSize 2048 di Fabric)"
+echo "  3. Default opacity buttons: ora applicano l'opacita anche"
+echo "     al watermark selezionato (oltre a impostarla per i nuovi)"
+echo "  4. DesignThumbnail: spread piu' grande (200px vs 140), con"
+echo "     frame leggero e ombra"
+echo "  5. Pagine /codes /admin/codes /admin/codes/new: ora usano"
+echo "     PageHeader (font-display italic) coerente con resto app"
+echo "  6. Modal backdrop-blur + token coerenti (no più bg-surface-1)"
 echo ""
 echo "Premi INVIO per continuare, Ctrl+C per annullare."
 read -r _
 
 echo "═══════════════════════════════════════════════════════════"
-echo "STEP 1/3: copia file"
+echo "STEP 1/2: copia file"
 echo "═══════════════════════════════════════════════════════════"
-mkdir -p lib components
-mkdir -p app/api/codes/bulk-assign
-mkdir -p app/api/codes/distribute
-mkdir -p app/api/codes/\[id\]/revoke
-mkdir -p app/api/codes/\[id\]/restore
+mkdir -p app/login app/codes app/admin/codes app/admin/codes/new
+mkdir -p components/editor components/designs components/admin
 
-cp -v _v34_payload/lib/code-email-template.ts lib/code-email-template.ts
-cp -v _v34_payload/components/CodesTable.tsx components/CodesTable.tsx
-cp -v _v34_payload/app/api/codes/bulk-assign/route.ts app/api/codes/bulk-assign/route.ts
-cp -v _v34_payload/app/api/codes/distribute/route.ts app/api/codes/distribute/route.ts
-cp -v "_v34_payload/app/api/codes/[id]/revoke/route.ts" "app/api/codes/[id]/revoke/route.ts"
-cp -v "_v34_payload/app/api/codes/[id]/restore/route.ts" "app/api/codes/[id]/restore/route.ts"
+cp -v _v35_payload/app/login/page.tsx app/login/page.tsx
+cp -v _v35_payload/app/codes/page.tsx app/codes/page.tsx
+cp -v _v35_payload/app/admin/codes/page.tsx app/admin/codes/page.tsx
+cp -v _v35_payload/app/admin/codes/new/page.tsx app/admin/codes/new/page.tsx
+cp -v _v35_payload/components/editor/CoverEditor.tsx components/editor/CoverEditor.tsx
+cp -v _v35_payload/components/editor/PageEditor.tsx components/editor/PageEditor.tsx
+cp -v _v35_payload/components/designs/DesignThumbnail.tsx components/designs/DesignThumbnail.tsx
+cp -v _v35_payload/components/designs/DesignsList.tsx components/designs/DesignsList.tsx
+cp -v _v35_payload/components/admin/NewBatchForm.tsx components/admin/NewBatchForm.tsx
+cp -v _v35_payload/components/CodesTable.tsx components/CodesTable.tsx
 
-echo ""
-echo "═══════════════════════════════════════════════════════════"
-echo "STEP 2/3: cleanup payload"
-echo "═══════════════════════════════════════════════════════════"
-rm -rf _v34_payload
+rm -rf _v35_payload
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "STEP 3/3: git commit + push"
+echo "STEP 2/2: git commit + push"
 echo "═══════════════════════════════════════════════════════════"
 git add -A
-git commit -m "v34: codes bulk-assign + distribute + revoke/restore + CSV import"
+git commit -m "v35: invert canvas2d + opacity buttons + page typography + modal blur"
 git push
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "FATTO! Vercel deploy ~60-90s."
+echo "FATTO! Aspetta deploy verde su Vercel."
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Test post-deploy (dopo che v33 e' gia' deployato):"
-echo ""
-echo "  1. Vai a /codes -> vedi nuovi bottoni 'Import CSV' e 'Send emails'"
-echo "  2. Click 'Import CSV' -> incolla:"
-echo "       email,name"
-echo "       test1@example.com,Mario"
-echo "       test2@example.com,Luisa"
-echo "     -> Click 'Assign codes' -> vedi 2 codici assegnati"
-echo "  3. Seleziona checkbox sui codici assegnati"
-echo "  4. Click 'Send emails' -> conferma -> dovrebbe mostrare 'sent: 2'"
-echo "     (in dev senza RESEND_API_KEY logga in console di Vercel)"
-echo "  5. Test Revoke su un codice -> dovrebbe diventare REVOKED"
-echo "  6. Test Restore sullo stesso -> torna AVAILABLE"
+echo "Test:"
+echo "  1. Login: testi e logo bianchi ben leggibili"
+echo "  2. Editor cover: carica logo wide (es STELVIO collection),"
+echo "     click Invert -> il logo COMPLETO diventa bianco"
+echo "  3. Editor pagina: seleziona un watermark, click 10/20/30/50%"
+echo "     -> opacità del watermark cambia istantaneamente"
+echo "  4. /designs: griglia con thumbnail spread piu' grandi e curate"
+echo "  5. /codes: titolo in font-display italic come le altre pagine"
+echo "  6. /codes -> Import CSV / Send emails / Assign:"
+echo "     dialog con backdrop blurrato e sfondo glass leggibile"
 echo ""

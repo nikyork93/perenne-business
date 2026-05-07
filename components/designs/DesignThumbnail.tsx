@@ -126,10 +126,24 @@ export function DesignThumbnail({
   }
 
   if (mode === 'spread') {
+    // v35: more polished spread — light frame, subtle shadow, tiny gap
+    // simulating the spine. Slight scale on the cover so the asymmetry
+    // (cover being the primary surface) reads at a glance.
     return (
-      <div className={className} style={{ display: 'inline-flex', gap: 1 }}>
-        <CoverPanel borderRadius="6px 0 0 6px" />
-        <PagePanel borderRadius="0 6px 6px 0" />
+      <div
+        className={className}
+        style={{
+          display: 'inline-flex',
+          gap: 2,
+          padding: 8,
+          borderRadius: 12,
+          background: 'var(--surface-faint)',
+          border: '1px solid var(--border-subtle)',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.10)',
+        }}
+      >
+        <CoverPanel borderRadius="4px 0 0 4px" />
+        <PagePanel borderRadius="0 4px 4px 0" />
       </div>
     );
   }

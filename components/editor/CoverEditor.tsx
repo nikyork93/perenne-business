@@ -468,16 +468,19 @@ export function CoverEditor({
             br: true,
           });
 
-          // Bug 4 fix: use FillColor white instead of stock Invert.
-          // v33: also disable objectCaching to prevent BlendColor truncation.
+          // v35: defer invert restoration until after the image is on
+          // canvas — calls setInvertedState() which uses the manual
+          // canvas2d tinting helper (no WebGL truncation).
           if (restore?.invert) {
-            const f = makeFillColorFilter(fabricLib, '#ffffff');
-            img.filters = f ? [f] : [];
-            img.objectCaching = false;
-            img.statefullCache = false;
-            img.dirty = true;
-            if (img._originalElement) img._element = img._originalElement;
-            img.applyFilters?.();
+            // Mark for invert; setInvertedState will lazily build the
+            // tinted element. Note: we can't call setInvertedState here
+            // because of TDZ — it's defined later in the component.
+            // Instead set the flag and re-invert on next tick.
+            img.perenneInverted = true;
+            queueMicrotask(() => {
+              setInvertedState(img, true);
+              canvas.requestRenderAll?.();
+            });
           }
 
           canvas.add(img);
@@ -547,53 +550,76 @@ export function CoverEditor({
     });
   }
 
-  // ─── Filter helpers ────────────────────────────────────────────────
-  // setInvertedState writes the desired inverted flag onto a fabric
-  // image AND re-applies the underlying BlendColor white filter so the
-  // canvas reflects the change immediately. Pure operation on the
-  // fabric object — does NOT touch React state. The caller owns syncing
-  // the state; this just changes pixels.
+  // ─── Filter helpers (v35 — manual canvas inversion) ──────────────
+  //
+  // Why manual: Fabric 5's BlendColor filter routes through a WebGL
+  // backend with a default maxTextureSize of 2048. When an inverted
+  // logo's *original* image width exceeds that (e.g. a 4096×600 wide
+  // wordmark), the filter pipeline silently downscales+crops the
+  // result, so on the canvas the user sees only the leftmost ~2048px
+  // worth of the logo. Setting objectCaching=false didn't help because
+  // the truncation happens inside applyFilters() before caching.
+  //
+  // Solution: do the tint manually on a canvas2d offscreen buffer at
+  // the original image's natural dimensions. This bypasses WebGL
+  // entirely. For our use case (preserving alpha, recoloring all
+  // non-transparent pixels white) the math is trivial:
+  //
+  //   for each pixel: if alpha > 0 → set rgb to (255,255,255)
+  //
+  // We cache the inverted canvas on the fabric image so toggling
+  // doesn't re-process every time.
+  function buildInvertedElement(orig: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement {
+    const w = (orig as HTMLImageElement).naturalWidth || orig.width;
+    const h = (orig as HTMLImageElement).naturalHeight || orig.height;
+    const out = document.createElement('canvas');
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext('2d');
+    if (!ctx) return out;
+    ctx.drawImage(orig as CanvasImageSource, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h);
+    const px = data.data;
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3] > 0) {
+        px[i] = 255;
+        px[i + 1] = 255;
+        px[i + 2] = 255;
+      }
+    }
+    ctx.putImageData(data, 0, 0);
+    return out;
+  }
+
   function setInvertedState(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     img: any,
     inverted: boolean
   ) {
-    const fabricLib = window.fabric;
-    if (!fabricLib) return;
     img.perenneInverted = inverted;
+    // Clear filters — we do the work manually now
+    img.filters = [];
+
+    // Lazy-build (and cache) the inverted canvas on first invert
     if (inverted) {
-      const f = makeFillColorFilter(fabricLib, '#ffffff');
-      img.filters = f ? [f] : [];
-    } else {
-      img.filters = [];
+      if (!img._perenneInvertedEl) {
+        const orig = img._originalElement;
+        if (orig) {
+          img._perenneInvertedEl = buildInvertedElement(orig);
+        }
+      }
+      if (img._perenneInvertedEl) {
+        img._element = img._perenneInvertedEl;
+      }
+    } else if (img._originalElement) {
+      img._element = img._originalElement;
     }
 
-    // ─── v33 fix: prevent invert truncation ─────────────────────────
-    // Fabric 5.x bug: applyFilters() rebuilds the image's internal
-    // canvas (`_element`) at dimensions equal to the *original* image,
-    // BUT it caps that canvas to the WebGL backend's max size (default
-    // 2048px) AND uses the natural width/height as bounds. When a logo
-    // PNG has a wider intrinsic size than the BlendColor pipeline's
-    // texture buffer, the filter output is silently clipped on the
-    // right/bottom (you see "STELVIO collection" become "STEL collec").
-    //
-    // Fix: restore the original element BEFORE applying filters, then
-    // explicitly mark the object dirty + bust the cache key so Fabric
-    // recomputes the filter output from scratch each time. Also
-    // forcibly disable the per-object texture cache (objectCaching =
-    // false) — the small perf hit is negligible for a few logos and
-    // it sidesteps the entire cache-sizing issue.
+    // Force re-render
     img.dirty = true;
     img.objectCaching = false;
     img.statefullCache = false;
-    if (img._originalElement) {
-      img._element = img._originalElement;
-      img._filterScalingX = 1;
-      img._filterScalingY = 1;
-    }
     img.cacheKey = `${img.perenneAssetId ?? 'x'}_${inverted ? 'inv' : 'orig'}_${Date.now()}`;
-    img.applyFilters?.();
-    // setCoords syncs the bounding box after _element changes
     img.setCoords?.();
   }
 
