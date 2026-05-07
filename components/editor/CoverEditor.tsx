@@ -469,9 +469,14 @@ export function CoverEditor({
           });
 
           // Bug 4 fix: use FillColor white instead of stock Invert.
+          // v33: also disable objectCaching to prevent BlendColor truncation.
           if (restore?.invert) {
             const f = makeFillColorFilter(fabricLib, '#ffffff');
             img.filters = f ? [f] : [];
+            img.objectCaching = false;
+            img.statefullCache = false;
+            img.dirty = true;
+            if (img._originalElement) img._element = img._originalElement;
             img.applyFilters?.();
           }
 
@@ -562,23 +567,34 @@ export function CoverEditor({
     } else {
       img.filters = [];
     }
-    // ─── Cache invalidation ────────────────────────────────────────
-    // Fabric.js 5.x has a known issue where applyFilters() doesn't
-    // always re-process the cached canvas when the filters array is
-    // mutated in place (especially after the FIRST application — the
-    // filter pipeline gets cached and subsequent images reuse stale
-    // pipeline state). The symptom: invert works on the first image
-    // but silently fails on subsequent images.
+
+    // ─── v33 fix: prevent invert truncation ─────────────────────────
+    // Fabric 5.x bug: applyFilters() rebuilds the image's internal
+    // canvas (`_element`) at dimensions equal to the *original* image,
+    // BUT it caps that canvas to the WebGL backend's max size (default
+    // 2048px) AND uses the natural width/height as bounds. When a logo
+    // PNG has a wider intrinsic size than the BlendColor pipeline's
+    // texture buffer, the filter output is silently clipped on the
+    // right/bottom (you see "STELVIO collection" become "STEL collec").
     //
-    // Fix: explicitly invalidate the cached canvas + cacheKey before
-    // reapplying. This forces Fabric to re-walk the filter pipeline
-    // for THIS image instead of reusing a sibling's cache.
+    // Fix: restore the original element BEFORE applying filters, then
+    // explicitly mark the object dirty + bust the cache key so Fabric
+    // recomputes the filter output from scratch each time. Also
+    // forcibly disable the per-object texture cache (objectCaching =
+    // false) — the small perf hit is negligible for a few logos and
+    // it sidesteps the entire cache-sizing issue.
     img.dirty = true;
-    if (img._element && img._originalElement) {
+    img.objectCaching = false;
+    img.statefullCache = false;
+    if (img._originalElement) {
       img._element = img._originalElement;
+      img._filterScalingX = 1;
+      img._filterScalingY = 1;
     }
     img.cacheKey = `${img.perenneAssetId ?? 'x'}_${inverted ? 'inv' : 'orig'}_${Date.now()}`;
     img.applyFilters?.();
+    // setCoords syncs the bounding box after _element changes
+    img.setCoords?.();
   }
 
   // Manual invert toggle. Mutually exclusive with auto-adapt — clicking

@@ -347,7 +347,8 @@ model Design {
 
   // Relations
   orders              Order[]                           // orders that snapshotted this design
-  legacyTeamCodes     LegacyTeamCode[]                  // manual codes pointing at this design (live ref)
+  legacyTeamCodes     LegacyTeamCode[]
+  notebookCodes       NotebookCode[]                  // manual codes pointing at this design (live ref)
 
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
@@ -407,11 +408,24 @@ model Order {
 
 model NotebookCode {
   id                String       @id @default(cuid())
-  code              String       @unique          // PRN-XXXX-XXXX-XXXX format
+  code              String       @unique          // PRN-XXXX-XXXX-XXXX or shorter manual format
   companyId         String
   company           Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  orderId           String
-  order             Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // Stripe-issued codes link to an Order. Manually-created codes
+  // (superadmin batch) leave orderId null.
+  orderId           String?
+  order             Order?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  // Direct design link — set explicitly for manual codes, OR mirrored
+  // from order.designId for Stripe codes (so the dashboard can show
+  // "which design" without having to join through Order every time).
+  designId          String?
+  design            Design?      @relation(fields: [designId], references: [id], onDelete: SetNull)
+
+  // Batch metadata for manual codes (e.g. "Acme Q1 2026 - 50 codes")
+  batchLabel        String?
+  notes             String?
 
   status            CodeStatus   @default(AVAILABLE)
 
@@ -423,6 +437,7 @@ model NotebookCode {
   // Distribution target (if assigned before claiming)
   assignedToEmail   String?
   assignedToName    String?
+  assignedAt        DateTime?
   distributionId    String?
   distribution      DistributionBatch? @relation(fields: [distributionId], references: [id], onDelete: SetNull)
 
@@ -434,8 +449,10 @@ model NotebookCode {
   @@index([code])
   @@index([companyId])
   @@index([orderId])
+  @@index([designId])
   @@index([status])
   @@index([distributionId])
+  @@index([batchLabel])
 }
 
 // ─── Distribution & email ───────────────────────────────────────

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { buildDesignSnapshot } from '@/lib/design';
 import type { Prisma } from '@prisma/client';
 
 export const runtime = 'nodejs';
@@ -13,15 +14,15 @@ const CACHE_HEADERS = {
 /**
  * GET /api/team/[code]
  *
- * Public endpoint for iOS app team-code activation.
- * iOS calls: GET https://business.perenne.app/api/team/{CODE}
+ * Public endpoint for iOS Perenne Note → team code activation.
  *
- * Lookup priority:
- *   1. NotebookCode (Stripe-issued via /store)
- *   2. LegacyTeamCode (manual, from /admin/legacy-codes)
- *
- * v32: maxDuration=30s for Neon cold starts, full try/catch around
- * each Prisma call, no relation join issues.
+ * v33: NotebookCode now supports manual codes (orderId=null,
+ * designId set directly). Lookup priority:
+ *   1. NotebookCode (manual + Stripe)
+ *      - Uses NotebookCode.designId directly if set (manual codes)
+ *      - Falls back to NotebookCode.order.designSnapshotJson (Stripe)
+ *      - Falls back to company defaults
+ *   2. LegacyTeamCode (KV migration codes — being phased out)
  */
 export async function GET(
   _req: Request,
@@ -43,7 +44,7 @@ export async function GET(
     );
   }
 
-  // 1. NotebookCode lookup
+  // 1. NotebookCode lookup (handles BOTH manual and Stripe codes)
   try {
     const notebook = await prisma.notebookCode.findUnique({
       where: { code: codeInput },
@@ -57,6 +58,22 @@ export async function GET(
             primaryColor: true,
           },
         },
+        // direct design link (manual codes)
+        design: {
+          select: {
+            name: true,
+            isArchived: true,
+            backgroundColor: true,
+            backgroundImageUrl: true,
+            assetsJson: true,
+            pageWatermarksJson: true,
+            quoteText: true,
+            quotePosition: true,
+            quoteColor: true,
+            previewPngUrl: true,
+          },
+        },
+        // fallback through Order (Stripe codes — frozen snapshot)
         order: {
           select: { designSnapshotJson: true },
         },
@@ -70,8 +87,30 @@ export async function GET(
           { status: 410, headers: CACHE_HEADERS }
         );
       }
-      const snapshot = notebook.order?.designSnapshotJson ?? null;
+
+      // Build snapshot:
+      //   manual code -> live snapshot from referenced Design
+      //   Stripe code -> frozen snapshot from Order
+      //   neither -> null (iOS will show defaults)
+      let snapshot: Prisma.JsonValue | null = null;
+      let designName: string | null = null;
+      let designArchived = false;
+
+      if (notebook.design) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          snapshot = buildDesignSnapshot(notebook.design as any);
+          designName = notebook.design.name;
+          designArchived = notebook.design.isArchived;
+        } catch (err) {
+          console.error('[/api/team] buildDesignSnapshot failed', err);
+        }
+      } else if (notebook.order?.designSnapshotJson) {
+        snapshot = notebook.order.designSnapshotJson;
+      }
+
       const quote = extractQuote(snapshot);
+
       return NextResponse.json(
         {
           company: notebook.company.name,
@@ -84,17 +123,18 @@ export async function GET(
           quote,
           seats: null,
           expires: null,
-          design: snapshot ? { name: null, archived: false, snapshot } : null,
+          design: snapshot
+            ? { name: designName, archived: designArchived, snapshot }
+            : null,
         },
         { headers: CACHE_HEADERS }
       );
     }
   } catch (err) {
     console.error('[/api/team] notebookCode lookup failed', err);
-    // continue to legacy lookup
   }
 
-  // 2. LegacyTeamCode lookup
+  // 2. LegacyTeamCode lookup (kept for back-compat with imported KV codes)
   try {
     const legacy = await prisma.legacyTeamCode.findUnique({
       where: { code: codeInput },
@@ -144,13 +184,6 @@ export async function GET(
     }
   } catch (err) {
     console.error('[/api/team] legacyTeamCode lookup failed', err);
-    return NextResponse.json(
-      {
-        error: 'Database error.',
-        detail: err instanceof Error ? err.message : String(err),
-      },
-      { status: 500 }
-    );
   }
 
   return NextResponse.json(

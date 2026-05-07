@@ -30,6 +30,7 @@ const MAIN_NAV: NavItem[] = [
 const ADMIN_NAV: NavItem[] = [
   { href: '/admin/companies',    label: 'Companies' },
   { href: '/admin/users',        label: 'Users' },
+  { href: '/admin/codes',        label: 'Code batches' },
   { href: '/admin/legacy-codes', label: 'Legacy codes' },
   { href: '/admin/revenue',      label: 'Revenue' },
   { href: '/admin/audit',        label: 'Audit log' },

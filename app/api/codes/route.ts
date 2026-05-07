@@ -5,10 +5,12 @@ import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
 
 export const runtime = 'nodejs';
+export const maxDuration = 30;
 
 const querySchema = z.object({
   status: z.nativeEnum(CodeStatus).optional(),
   orderId: z.string().cuid().optional(),
+  batchLabel: z.string().trim().max(120).optional(),
   search: z.string().trim().max(50).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
@@ -17,13 +19,11 @@ const querySchema = z.object({
 /**
  * GET /api/codes
  *
- * Lists notebook codes for the current company. Now also includes
- * the design name + designId of the parent order so the UI can show
- * which design each code is locked to (e.g. "Christmas 2026").
+ * Lists notebook codes for the current company. Includes the design
+ * name (from NotebookCode.design directly OR fallback through Order
+ * for older Stripe codes that pre-date the direct-link migration).
  *
- * Falls back gracefully for codes that pre-date the design migration:
- * if order.designId is null, designName is returned as null and the
- * UI shows a dash.
+ * Filters: status, orderId, batchLabel, search (matches code/email/name).
  */
 export async function GET(req: NextRequest) {
   const session = await getSession();
@@ -36,18 +36,20 @@ export async function GET(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid query params' }, { status: 400 });
   }
-  const { status, orderId, search, page, pageSize } = parsed.data;
+  const { status, orderId, batchLabel, search, page, pageSize } = parsed.data;
 
   const where = {
     companyId: session.companyId,
     ...(status ? { status } : {}),
     ...(orderId ? { orderId } : {}),
+    ...(batchLabel ? { batchLabel } : {}),
     ...(search
       ? {
           OR: [
             { code: { contains: search.toUpperCase() } },
             { assignedToEmail: { contains: search.toLowerCase() } },
             { assignedToName: { contains: search } },
+            { batchLabel: { contains: search } },
           ],
         }
       : {}),
@@ -66,13 +68,15 @@ export async function GET(req: NextRequest) {
         status: true,
         assignedToEmail: true,
         assignedToName: true,
+        assignedAt: true,
         claimedAt: true,
         claimedDeviceId: true,
         createdAt: true,
         orderId: true,
-        // Pull the design name through the order relation. We use a
-        // shallow include so we don't ship the snapshot blob over
-        // the wire — the iOS app reads that, not the dashboard.
+        batchLabel: true,
+        notes: true,
+        designId: true,
+        design: { select: { name: true, isArchived: true } },
         order: {
           select: {
             designId: true,
@@ -83,31 +87,39 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
-  // Flatten order.design.* into top-level designName / designId on the
-  // code row so the client doesn't need nested types.
-  const codes = rows.map((r) => ({
-    id: r.id,
-    code: r.code,
-    status: r.status,
-    assignedToEmail: r.assignedToEmail,
-    assignedToName: r.assignedToName,
-    claimedAt: r.claimedAt,
-    claimedDeviceId: r.claimedDeviceId,
-    createdAt: r.createdAt,
-    orderId: r.orderId,
-    designId: r.order?.designId ?? null,
-    designName: r.order?.design?.name ?? null,
-    designArchived: r.order?.design?.isArchived ?? false,
-  }));
+  // Resolve design info: prefer direct designId, fallback to order.design
+  const codes = rows.map((r) => {
+    const directDesign = r.design;
+    const orderDesign = r.order?.design ?? null;
+    const dName = directDesign?.name ?? orderDesign?.name ?? null;
+    const dArchived = directDesign?.isArchived ?? orderDesign?.isArchived ?? false;
+    const dId = r.designId ?? r.order?.designId ?? null;
+    return {
+      id: r.id,
+      code: r.code,
+      status: r.status,
+      assignedToEmail: r.assignedToEmail,
+      assignedToName: r.assignedToName,
+      assignedAt: r.assignedAt?.toISOString() ?? null,
+      claimedAt: r.claimedAt?.toISOString() ?? null,
+      claimedDeviceId: r.claimedDeviceId,
+      createdAt: r.createdAt.toISOString(),
+      orderId: r.orderId,
+      batchLabel: r.batchLabel,
+      notes: r.notes,
+      designId: dId,
+      designName: dName,
+      designArchived: dArchived,
+    };
+  });
 
   return NextResponse.json({
-    ok: true,
     codes,
     pagination: {
-      page,
-      pageSize,
       total,
-      totalPages: Math.ceil(total / pageSize),
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      pageSize,
+      page,
     },
   });
 }

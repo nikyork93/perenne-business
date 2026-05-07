@@ -1,49 +1,42 @@
-import { redirect } from 'next/navigation';
+import { Shell } from '@/components/layout/Shell';
+import { CodesTable } from '@/components/CodesTable';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { Shell } from '@/components/layout/Shell';
-import { PageHeader } from '@/components/layout/PageHeader';
-import { Stat } from '@/components/ui/Stat';
-import { CodesTable } from '@/components/CodesTable';
+
+export const dynamic = 'force-dynamic';
 
 export default async function CodesPage() {
   const session = await requireSession();
-  if (!session.companyId) {
-    redirect('/onboarding');
+
+  let companyName: string | undefined;
+  if (session.companyId) {
+    const c = await prisma.company.findUnique({
+      where: { id: session.companyId },
+      select: { name: true },
+    });
+    companyName = c?.name;
   }
-
-  const companyId = session.companyId;
-
-  const [company, total, claimed, available, revoked] = await Promise.all([
-    prisma.company.findUnique({ where: { id: companyId } }),
-    prisma.notebookCode.count({ where: { companyId } }),
-    prisma.notebookCode.count({ where: { companyId, status: 'CLAIMED' } }),
-    prisma.notebookCode.count({ where: { companyId, status: 'AVAILABLE' } }),
-    prisma.notebookCode.count({ where: { companyId, status: 'REVOKED' } }),
-  ]);
-
-  const claimRate = total > 0 ? Math.round((claimed / total) * 100) : 0;
 
   return (
     <Shell
-      companyName={company?.name}
+      companyName={companyName}
       userEmail={session.email}
       isSuperAdmin={session.role === 'SUPERADMIN'}
     >
-      <PageHeader
-        eyebrow="Codes"
-        title="Notebook codes"
-        description="Every code unlocks one branded notebook for one employee, for life."
-      />
+      <div className="max-w-7xl mx-auto p-8 space-y-6">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.22em] text-ink-faint font-mono mb-2">
+            Codes
+          </div>
+          <h1 className="text-3xl font-light text-ink">Notebook codes</h1>
+          <p className="text-sm text-ink-dim mt-2 max-w-2xl">
+            Codes issued to your company. Assign them to your team members so
+            they can activate Perenne Note on their iPad.
+          </p>
+        </div>
 
-      <div className="grid grid-cols-4 gap-3.5 mb-6">
-        <Stat label="Total" value={total} />
-        <Stat label="Available" value={available} hint="ready to distribute" />
-        <Stat label="Claimed" value={claimed} hint={`${claimRate}% activation`} />
-        <Stat label="Revoked" value={revoked} />
+        <CodesTable />
       </div>
-
-      <CodesTable />
     </Shell>
   );
 }
