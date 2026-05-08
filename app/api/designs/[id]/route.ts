@@ -43,17 +43,24 @@ export async function GET(
 }
 
 // ── PATCH ───────────────────────────────────────────────────────────
-const assetRefSchema = z.object({
-  name: z.string(),
-  url: z.string().optional(),
-  dataUrl: z.string().optional(),
-  x: z.number(),
-  y: z.number(),
-  scale: z.number(),
-  rotation: z.number(),
-  opacity: z.number(),
-  invert: z.boolean().optional(),
-});
+const assetRefSchema = z
+  .object({
+    name: z.string(),
+    url: z.string().optional(),
+    dataUrl: z.string().optional(),
+    x: z.number(),
+    y: z.number(),
+    scale: z.number(),
+    rotation: z.number(),
+    opacity: z.number(),
+    invert: z.boolean().optional(),
+  })
+  // v40 — refuse to persist assets with neither a URL nor a dataURL.
+  // Without one of these the asset is unrenderable and was the root
+  // cause of the "I saved my logos and they vanished" bug.
+  .refine((a) => Boolean(a.url || a.dataUrl), {
+    message: 'asset must have either url or dataUrl',
+  });
 
 const updateBodySchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
@@ -134,6 +141,16 @@ export async function PATCH(
     }
   }
   if (body.previewPngUrl !== undefined) data.previewPngUrl = body.previewPngUrl;
+
+  // v40 — instrumentation to catch any future asset-loss regressions.
+  // Logs counts (not full payload) of what we're about to write.
+  const _coverCount = body.assets?.length ?? 'unchanged';
+  const _watermarkCount = body.pageWatermarks?.length ?? 'unchanged';
+  const _dataUrlCover = body.assets?.filter((a) => !a.url && a.dataUrl).length ?? 0;
+  const _dataUrlPage = body.pageWatermarks?.filter((a) => !a.url && a.dataUrl).length ?? 0;
+  console.info(
+    `[PATCH /api/designs/${id}] assets=${_coverCount} watermarks=${_watermarkCount} dataUrlOnly=${_dataUrlCover}+${_dataUrlPage}`
+  );
 
   const updated = await prisma.design.update({
     where: { id },

@@ -147,6 +147,8 @@ export function PageEditor({
   });
 
   const [assets, setAssets] = useState<AssetEntry[]>([]);
+  // v40 — track in-flight R2 uploads so Save UI can warn the user
+  const [pendingUploads, setPendingUploads] = useState<Set<string>>(() => new Set());
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [activeObj, setActiveObj] = useState<any | null>(null);
   const [selTick, setSelTick] = useState(0);
@@ -372,6 +374,7 @@ export function PageEditor({
   );
 
   // ─── Upload ────────────────────────────────────────────────────────
+  // v40 — tracks pending R2 uploads + logs failures
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     files.forEach(async (file) => {
@@ -384,13 +387,32 @@ export function PageEditor({
       loadAssetFromUrl(dataUrl, file.name);
 
       if (onAssetUpload) {
-        const result = await onAssetUpload(file);
-        if (result?.url) {
-          setAssets((prev) =>
-            prev.map((a) =>
-              a.name === file.name && !a.url ? { ...a, url: result.url } : a
-            )
-          );
+        setPendingUploads((prev) => {
+          const next = new Set(prev);
+          next.add(file.name);
+          return next;
+        });
+        try {
+          const result = await onAssetUpload(file);
+          if (result?.url) {
+            setAssets((prev) =>
+              prev.map((a) =>
+                a.name === file.name && !a.url ? { ...a, url: result.url } : a
+              )
+            );
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn('[PageEditor] upload returned no url for', file.name);
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[PageEditor] upload threw for', file.name, err);
+        } finally {
+          setPendingUploads((prev) => {
+            const next = new Set(prev);
+            next.delete(file.name);
+            return next;
+          });
         }
       }
     });
@@ -536,10 +558,13 @@ export function PageEditor({
   }, [activeObj, isActive]);
 
   // ─── Save ──────────────────────────────────────────────────────────
+  // v40 — always include url OR dataUrl, never lose data even if R2
+  // upload was still in flight at save time.
   function buildWatermarks(): CoverAssetRef[] {
     return assets.map((a) => ({
       name: a.name,
       url: a.url,
+      dataUrl: a.url ? undefined : a.dataUrl,
       x: +(a.fabricObj.left / EDITOR_CANVAS_WIDTH).toFixed(4),
       y: +(a.fabricObj.top / EDITOR_CANVAS_HEIGHT).toFixed(4),
       scale: +a.fabricObj.scaleX.toFixed(4),
@@ -1056,7 +1081,13 @@ export function PageEditor({
       {/* ── Bottom toolbar ─────────────────────────────────────── */}
       <div className="flex gap-3 mt-4 justify-end">
         <Button onClick={handleReset}>Reset</Button>
-        <Button variant="primary" onClick={handleSave} loading={saving} disabled={!onSave}>
+        <Button
+          variant="primary"
+          onClick={handleSave}
+          loading={saving || pendingUploads.size > 0}
+          disabled={!onSave}
+          title={pendingUploads.size > 0 ? `Uploading ${pendingUploads.size} file(s)...` : undefined}
+        >
           Save Watermarks
         </Button>
       </div>

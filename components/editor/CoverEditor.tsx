@@ -227,6 +227,8 @@ export function CoverEditor({
     initialConfig?.cover.backgroundImageUrl
   );
   const [assets, setAssets] = useState<AssetEntry[]>([]);
+  // v40 — track in-flight R2 uploads so Save UI can warn the user
+  const [pendingUploads, setPendingUploads] = useState<Set<string>>(() => new Set());
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [activeObj, setActiveObj] = useState<any | null>(null);
   const [selTick, setSelTick] = useState(0);
@@ -502,6 +504,10 @@ export function CoverEditor({
   );
 
   // ─── Logo upload handler ───────────────────────────────────────────
+  // v40 — Tracks pending uploads so the Save button can warn / wait.
+  // Each upload in flight is recorded in `pendingUploads` (a Set of
+  // file names). When upload settles, we either record the URL or
+  // log an error so the user knows the asset is in-memory only.
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     files.forEach(async (file) => {
@@ -514,13 +520,35 @@ export function CoverEditor({
       loadAssetFromUrl(dataUrl, file.name);
 
       if (onAssetUpload) {
-        const result = await onAssetUpload(file);
-        if (result?.url) {
-          setAssets((prev) =>
-            prev.map((a) =>
-              a.name === file.name && !a.url ? { ...a, url: result.url } : a
-            )
-          );
+        // Mark this filename as pending so the Save button reflects it.
+        setPendingUploads((prev) => {
+          const next = new Set(prev);
+          next.add(file.name);
+          return next;
+        });
+        try {
+          const result = await onAssetUpload(file);
+          if (result?.url) {
+            setAssets((prev) =>
+              prev.map((a) =>
+                a.name === file.name && !a.url ? { ...a, url: result.url } : a
+              )
+            );
+          } else {
+            // Upload failed but the dataURL kept the asset visible.
+            // Keep dataUrl in state so buildConfig falls back to it.
+            // eslint-disable-next-line no-console
+            console.warn('[CoverEditor] upload returned no url for', file.name);
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[CoverEditor] upload threw for', file.name, err);
+        } finally {
+          setPendingUploads((prev) => {
+            const next = new Set(prev);
+            next.delete(file.name);
+            return next;
+          });
         }
       }
     });
@@ -770,6 +798,11 @@ export function CoverEditor({
   }, [activeObj, isActive]);
 
   // ─── Serialize to config ───────────────────────────────────────────
+  // v40 — Always include either url OR dataUrl. This protects against
+  // the data-loss bug where a Save fired before R2 upload completed
+  // wrote assets with no url AND no dataUrl, so the design appeared
+  // empty after a refresh. With dataUrl as fallback the asset always
+  // round-trips visibly, even if the upload itself failed.
   function buildConfig(): CoverConfigData {
     return {
       version: 1,
@@ -779,7 +812,11 @@ export function CoverEditor({
         backgroundImageUrl: bgImageUrl?.startsWith('http') ? bgImageUrl : undefined,
         assets: assets.map((a) => ({
           name: a.name,
+          // Prefer the persistent R2 URL; fall back to the in-memory
+          // dataURL so users who Save before/while upload is in flight
+          // don't lose their work. Server accepts both.
           url: a.url,
+          dataUrl: a.url ? undefined : a.dataUrl,
           x: +(a.fabricObj.left / EDITOR_CANVAS_WIDTH).toFixed(4),
           y: +(a.fabricObj.top / EDITOR_CANVAS_HEIGHT).toFixed(4),
           scale: +a.fabricObj.scaleX.toFixed(4),
@@ -1169,7 +1206,17 @@ export function CoverEditor({
       <div className="flex gap-3 mt-4 justify-end">
         <Button onClick={handleReset}>Reset</Button>
         <Button onClick={handleExport}>Export JSON</Button>
-        <Button variant="primary" onClick={handleSave} loading={saving} disabled={!onSave}>
+        <Button
+          variant="primary"
+          onClick={handleSave}
+          loading={saving || pendingUploads.size > 0}
+          disabled={!onSave}
+          title={
+            pendingUploads.size > 0
+              ? `Uploading ${pendingUploads.size} file(s)... save anyway and they'll be re-uploaded next time`
+              : undefined
+          }
+        >
           Save Cover
         </Button>
       </div>
