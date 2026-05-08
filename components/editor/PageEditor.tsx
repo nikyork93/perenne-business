@@ -36,6 +36,8 @@ interface FabricImageLike {
   scaleY: number;
   angle: number;
   opacity: number;
+  width?: number;
+  height?: number;
   perenneAssetId?: number;
   perenneAssetName?: string;
   perenneInverted?: boolean;
@@ -58,22 +60,9 @@ interface PageEditorProps {
   initialWatermarks: CoverAssetRef[];
   onSave?: (watermarks: CoverAssetRef[]) => Promise<void> | void;
   onAssetUpload?: (file: File) => Promise<{ url: string } | null>;
-  /** Hint kept for backward compat — useState initialiser also checks window.fabric directly. */
   fabricAlreadyLoaded?: boolean;
-  /**
-   * Whether this editor is the currently visible tab. Used to gate
-   * window-level side effects (keyboard listener) so that pressing
-   * keys on one editor doesn't act on a hidden sibling editor.
-   * Defaults to true for backward compat with callers that don't
-   * pass it (e.g. standalone usage outside EditorClient).
-   */
   isActive?: boolean;
 }
-
-// ─── sessionStorage persistence ──────────────────────────────────────
-// Local UI state (paper hex, pattern, scale, default opacity) that
-// resets on tab-switch unmount otherwise. sessionStorage so it lives
-// for the browser session only — not polluting localStorage long-term.
 
 const SS_KEY = {
   hex: 'perenne.page-editor.paper-hex',
@@ -96,34 +85,6 @@ const DEFAULT_OPACITY = 0.3;
 
 const VALID_PATTERNS: ReadonlyArray<PaperPattern> = ['BLANK', 'RULED', 'GRID', 'DOTS'];
 
-/**
- * PageEditor — design watermarks that appear on every page of the notebook
- * EXCEPT the "Property of a thinking human" page (index 1).
- *
- * Canvas shows a single page preview (392 × 540, ratio 0.725, identical
- * to the notebook's physical 725 × 1000 page). The preview backdrop
- * paints the chosen paper colour + optional pattern (BLANK/RULED/GRID/
- * DOTS) under a transparent Fabric canvas. Paper preview is purely
- * local — it is NOT persisted to the DB and has no effect on iOS.
- *
- * v22 changes vs v21:
- *   - CSS shorthand bug: `backgroundColor` instead of `background` on
- *     the paper backdrop and on every thumbnail. The shorthand was
- *     clearing backgroundImage to none, and React's diff wasn't re-
- *     applying the (unchanged) image, so the pattern silently
- *     disappeared whenever the user changed colour.
- *   - iOS-style controls: circle paper-colour swatches with checkmark
- *     when selected; tall page-shaped pattern tiles with no label;
- *     three pattern-size buttons (100/150/200) replacing the slider.
- *   - Caption pill made legible: white text on a darker pill so it
- *     reads in both themes.
- *   - Page corners: rounded only on the LEFT side (top-left, bottom-
- *     left) at 14px so it reads as the left page of an open notebook.
- *   - Default-opacity selector for new uploads (10/20/30/50). Existing
- *     per-watermark slider in the right panel is unchanged.
- *   - sessionStorage persistence so paper-preview / default-opacity
- *     state survives the Pages → Cover → Pages tab cycle.
- */
 export function PageEditor({
   initialWatermarks,
   onSave,
@@ -138,7 +99,6 @@ export function PageEditor({
   const nextIdRef = useRef(1);
   const detachSnapRef = useRef<(() => void) | null>(null);
 
-  /** Fabric ready — initialised from window.fabric so a tab re-mount picks up an already-loaded fabric. */
   const [fabricReady, setFabricReady] = useState<boolean>(() => {
     if (fabricAlreadyLoaded) return true;
     if (typeof window === 'undefined') return false;
@@ -147,14 +107,13 @@ export function PageEditor({
   });
 
   const [assets, setAssets] = useState<AssetEntry[]>([]);
-  // v40 — track in-flight R2 uploads so Save UI can warn the user
   const [pendingUploads, setPendingUploads] = useState<Set<string>>(() => new Set());
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [activeObj, setActiveObj] = useState<any | null>(null);
   const [selTick, setSelTick] = useState(0);
   const [saving, setSaving] = useState(false);
-
-  // ─── Paper preview state (local only, persisted to sessionStorage) ─
+  // v41 — track image-load errors so the user sees them in the UI
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
 
   const [paperHex, setPaperHex] = useState<string>(() => {
     const saved = ssGet(SS_KEY.hex);
@@ -178,10 +137,6 @@ export function PageEditor({
     return Number.isFinite(n) && n >= 0 && n <= 1 ? n : DEFAULT_OPACITY;
   });
 
-  // Spread view toggle — shows two pages side-by-side (left blank,
-  // right is the editable canvas) so the designer can see how the
-  // watermark sits in the context of an actual notebook spread.
-  // Local-only, persisted to sessionStorage.
   const [spreadView, setSpreadView] = useState<boolean>(() => {
     return ssGet(SS_KEY.spreadView) === '1';
   });
@@ -189,18 +144,14 @@ export function PageEditor({
     ssSet(SS_KEY.spreadView, spreadView ? '1' : '0');
   }, [spreadView]);
 
-  // Mirror state into sessionStorage so the next mount picks up the same values.
   useEffect(() => { ssSet(SS_KEY.hex, paperHex); }, [paperHex]);
   useEffect(() => { ssSet(SS_KEY.pattern, paperPattern); }, [paperPattern]);
   useEffect(() => { ssSet(SS_KEY.scale, String(paperScale)); }, [paperScale]);
   useEffect(() => { ssSet(SS_KEY.defaultOpacity, String(defaultOpacity)); }, [defaultOpacity]);
 
-  // Mirror defaultOpacity into a ref so loadAssetFromUrl (memoised with empty deps)
-  // can pick up the latest value without being re-created on every change.
   const defaultOpacityRef = useRef(defaultOpacity);
   useEffect(() => { defaultOpacityRef.current = defaultOpacity; }, [defaultOpacity]);
 
-  // ─── Fabric-ready safety net ───────────────────────────────────────
   useEffect(() => {
     if (fabricReady) return;
     if (typeof window === 'undefined') return;
@@ -223,7 +174,6 @@ export function PageEditor({
     };
   }, [fabricReady]);
 
-  // ─── Initialize Fabric canvas ──────────────────────────────────────
   useEffect(() => {
     if (!fabricReady || !canvasRef.current || fabricCanvasRef.current) return;
 
@@ -231,7 +181,6 @@ export function PageEditor({
     const fabricLib = (window as any).fabric;
     if (!fabricLib) return;
 
-    // v37: force Canvas2D filter backend (no WebGL maxTextureSize cap → invert color works on wide logos)
     ensureCanvas2dFilterBackend();
 
     const canvas = new fabricLib.Canvas(canvasRef.current, {
@@ -294,87 +243,155 @@ export function PageEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fabricReady]);
 
-  // ─── Asset loader ──────────────────────────────────────────────────
+  // v41 — Asset loader with CORS fallback, see CoverEditor for full
+  // commentary. Same logic, plus this editor applies defaultOpacity
+  // when adding fresh watermarks (not restored ones).
   const loadAssetFromUrl = useCallback(
     (url: string, name: string, restore?: CoverAssetRef) => {
       const canvas = fabricCanvasRef.current;
       const fabricLib = window.fabric;
       if (!canvas || !fabricLib) return;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      fabricLib.Image.fromURL(
-        url,
+      const onImage = (
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (img: any) => {
-          const id = nextIdRef.current++;
-          img.perenneAssetId = id;
-          img.perenneAssetName = name;
-          img.perenneInverted = restore?.invert ?? false;
+        img: any,
+        meta: { corsClean: boolean }
+      ) => {
+        if (!img) {
+          setLoadErrors((prev) =>
+            prev.includes(name) ? prev : [...prev, name]
+          );
+          // eslint-disable-next-line no-console
+          console.error('[PageEditor] watermark failed to load:', url, name);
+          return;
+        }
+        const w = img.width ?? img._element?.naturalWidth ?? 0;
+        const h = img.height ?? img._element?.naturalHeight ?? 0;
+        if (!w || !h) {
+          setLoadErrors((prev) =>
+            prev.includes(name) ? prev : [...prev, name]
+          );
+          // eslint-disable-next-line no-console
+          console.error('[PageEditor] watermark zero dims:', url, name);
+          return;
+        }
 
-          if (restore) {
-            img.set({
-              left: restore.x * EDITOR_CANVAS_WIDTH,
-              top: restore.y * EDITOR_CANVAS_HEIGHT,
-              originX: 'center',
-              originY: 'center',
-              scaleX: restore.scale,
-              scaleY: restore.scale,
-              angle: restore.rotation,
-              opacity: restore.opacity,
-              lockUniScaling: true,
-              lockScalingFlip: true,
-            });
-          } else {
-            const maxEdge = Math.max(img.width ?? 100, img.height ?? 100);
-            const scale = (EDITOR_CANVAS_WIDTH * 0.25) / maxEdge;
-            img.set({
-              left: EDITOR_CANVAS_WIDTH / 2,
-              top: EDITOR_CANVAS_HEIGHT / 2,
-              originX: 'center',
-              originY: 'center',
-              scaleX: scale,
-              scaleY: scale,
-              opacity: defaultOpacityRef.current,
-              lockUniScaling: true,
-              lockScalingFlip: true,
-            });
-          }
+        const id = nextIdRef.current++;
+        img.perenneAssetId = id;
+        img.perenneAssetName = name;
+        img.perenneInverted = restore?.invert ?? false;
 
-          img.setControlsVisibility({
-            mt: false, mb: false, ml: false, mr: false,
-            mtr: true, tl: true, tr: true, bl: true, br: true,
+        if (restore) {
+          img.set({
+            left: restore.x * EDITOR_CANVAS_WIDTH,
+            top: restore.y * EDITOR_CANVAS_HEIGHT,
+            originX: 'center',
+            originY: 'center',
+            scaleX: restore.scale,
+            scaleY: restore.scale,
+            angle: restore.rotation,
+            opacity: restore.opacity,
+            lockUniScaling: true,
+            lockScalingFlip: true,
           });
+        } else {
+          const maxEdge = Math.max(w, h);
+          const scale = (EDITOR_CANVAS_WIDTH * 0.25) / maxEdge;
+          img.set({
+            left: EDITOR_CANVAS_WIDTH / 2,
+            top: EDITOR_CANVAS_HEIGHT / 2,
+            originX: 'center',
+            originY: 'center',
+            scaleX: scale,
+            scaleY: scale,
+            opacity: defaultOpacityRef.current,
+            lockUniScaling: true,
+            lockScalingFlip: true,
+          });
+        }
 
-          if (restore?.invert) {
-            const f = makeFillColorFilter(fabricLib, '#ffffff');
-            img.filters = f ? [f] : [];
-            img.applyFilters?.();
+        img.setControlsVisibility?.({
+          mt: false, mb: false, ml: false, mr: false,
+          mtr: true, tl: true, tr: true, bl: true, br: true,
+        });
+
+        if (restore?.invert && meta.corsClean) {
+          const f = makeFillColorFilter(fabricLib, '#ffffff');
+          img.filters = f ? [f] : [];
+          img.applyFilters?.();
+        }
+
+        canvas.add(img);
+        if (!restore) canvas.setActiveObject(img);
+        canvas.renderAll();
+
+        setAssets((prev) => [
+          ...prev,
+          {
+            id,
+            name,
+            dataUrl: url.startsWith('data:') ? url : '',
+            url: url.startsWith('http') ? url : undefined,
+            inverted: restore?.invert ?? false,
+            fabricObj: img,
+          },
+        ]);
+      };
+
+      const isDataUrl = url.startsWith('data:');
+      if (isDataUrl) {
+        fabricLib.Image.fromURL(url, (img: unknown) =>
+          onImage(img, { corsClean: true })
+        );
+      } else {
+        const corsImg = new Image();
+        corsImg.crossOrigin = 'anonymous';
+        let resolved = false;
+        const tryPlain = () => {
+          if (resolved) return;
+          resolved = true;
+          // eslint-disable-next-line no-console
+          console.warn('[PageEditor] CORS load failed, retrying plain:', url);
+          const plain = new Image();
+          plain.onload = () => {
+            if (!plain.naturalWidth) {
+              // eslint-disable-next-line no-console
+              console.error('[PageEditor] plain load also 0×0:', url);
+              setLoadErrors((prev) =>
+                prev.includes(name) ? prev : [...prev, name]
+              );
+              return;
+            }
+            const fImg = new fabricLib.Image(plain);
+            onImage(fImg, { corsClean: false });
+          };
+          plain.onerror = () => {
+            // eslint-disable-next-line no-console
+            console.error('[PageEditor] both load attempts failed:', url);
+            setLoadErrors((prev) =>
+              prev.includes(name) ? prev : [...prev, name]
+            );
+          };
+          plain.src = url;
+        };
+        corsImg.onload = () => {
+          if (resolved) return;
+          if (!corsImg.naturalWidth) {
+            tryPlain();
+            return;
           }
-
-          canvas.add(img);
-          if (!restore) canvas.setActiveObject(img);
-          canvas.renderAll();
-
-          setAssets((prev) => [
-            ...prev,
-            {
-              id,
-              name,
-              dataUrl: url.startsWith('data:') ? url : '',
-              url: url.startsWith('http') ? url : undefined,
-              inverted: restore?.invert ?? false,
-              fabricObj: img,
-            },
-          ]);
-        },
-        { crossOrigin: 'anonymous' }
-      );
+          resolved = true;
+          const fImg = new fabricLib.Image(corsImg, { crossOrigin: 'anonymous' });
+          onImage(fImg, { corsClean: true });
+        };
+        corsImg.onerror = tryPlain;
+        corsImg.src = url;
+        setTimeout(() => { if (!resolved) tryPlain(); }, 6000);
+      }
     },
     []
   );
 
-  // ─── Upload ────────────────────────────────────────────────────────
-  // v40 — tracks pending R2 uploads + logs failures
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     files.forEach(async (file) => {
@@ -395,11 +412,31 @@ export function PageEditor({
         try {
           const result = await onAssetUpload(file);
           if (result?.url) {
-            setAssets((prev) =>
-              prev.map((a) =>
-                a.name === file.name && !a.url ? { ...a, url: result.url } : a
-              )
-            );
+            // v41 retry: setAssets may run before the fromURL callback
+            // has added the entry. Try a few times to find it.
+            const tryAttachUrl = (attempt = 0) => {
+              setAssets((prev) => {
+                const idx = prev.findIndex(
+                  (a) => a.name === file.name && !a.url
+                );
+                if (idx === -1) {
+                  if (attempt < 10) {
+                    setTimeout(() => tryAttachUrl(attempt + 1), 100);
+                  } else {
+                    // eslint-disable-next-line no-console
+                    console.error(
+                      '[PageEditor] gave up attaching url:',
+                      file.name
+                    );
+                  }
+                  return prev;
+                }
+                const next = [...prev];
+                next[idx] = { ...next[idx], url: result.url };
+                return next;
+              });
+            };
+            tryAttachUrl();
           } else {
             // eslint-disable-next-line no-console
             console.warn('[PageEditor] upload returned no url for', file.name);
@@ -419,7 +456,6 @@ export function PageEditor({
     e.target.value = '';
   }
 
-  // ─── Asset operations ──────────────────────────────────────────────
   function selectAsset(asset: AssetEntry) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
@@ -468,17 +504,10 @@ export function PageEditor({
     if (!canvas || !activeObj) return;
     activeObj.set(patch);
     activeObj.setCoords?.();
-    // requestRenderAll (RAF-coalesced) instead of renderAll (sync).
-    // For slider drags firing 60+ events/sec, sync renderAll did
-    // technically run each tick, but some browsers postponed the paint
-    // until idle, making the canvas look frozen during drag. RAF
-    // schedules the render at a paint boundary, which browsers honour
-    // predictably — visible live updates.
     canvas.requestRenderAll();
     setSelTick((t) => t + 1);
   }
 
-  // ─── Quick position ────────────────────────────────────────────────
   function applyPosition(name: 'tl' | 'tr' | 'bl' | 'br' | 'center') {
     if (assets.length === 0) {
       alert('Upload at least one watermark first.');
@@ -506,16 +535,6 @@ export function PageEditor({
     setSelTick((t) => t + 1);
   }
 
-  // ─── Keyboard shortcuts ────────────────────────────────────────────
-  // ─── Tab visibility recovery (v37) ─────────────────────────────
-  // PageEditor sits inside a parent <div style={display:none}> while
-  // the user is on the Cover tab. On visibility return:
-  //  - canvas viewport offsets need recomputing
-  //  - asset images may have been evicted (naturalWidth=0) and must
-  //    be reloaded from URL — this is the most common cause of the
-  //    "logo appears in sidebar but not on canvas" bug
-  //  - detached objects re-attached
-  // recoverCanvasOnVisibility() handles all of this and logs results.
   useEffect(() => {
     if (!isActive) return;
     const canvas = fabricCanvasRef.current;
@@ -534,10 +553,6 @@ export function PageEditor({
     return () => window.clearTimeout(handle);
   }, [isActive, assets]);
 
-  // Gated by `isActive` so the listener is only attached when this
-  // editor is the currently-visible tab. Without this guard, pressing
-  // Arrow / Delete on the active tab would also move/delete the active
-  // object on the hidden sibling editor (since both are mounted).
   useEffect(() => {
     if (!isActive) return;
     function handleKey(e: KeyboardEvent) {
@@ -557,21 +572,37 @@ export function PageEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeObj, isActive]);
 
-  // ─── Save ──────────────────────────────────────────────────────────
-  // v40 — always include url OR dataUrl, never lose data even if R2
-  // upload was still in flight at save time.
+  // v41 — Safe build. Drops invalid entries.
   function buildWatermarks(): CoverAssetRef[] {
-    return assets.map((a) => ({
-      name: a.name,
-      url: a.url,
-      dataUrl: a.url ? undefined : a.dataUrl,
-      x: +(a.fabricObj.left / EDITOR_CANVAS_WIDTH).toFixed(4),
-      y: +(a.fabricObj.top / EDITOR_CANVAS_HEIGHT).toFixed(4),
-      scale: +a.fabricObj.scaleX.toFixed(4),
-      rotation: +(a.fabricObj.angle || 0).toFixed(2),
-      opacity: +(a.fabricObj.opacity ?? 1).toFixed(2),
-      invert: a.inverted || undefined,
-    }));
+    return assets
+      .filter((a) => {
+        const hasContent = !!(a.url || a.dataUrl);
+        const f = a.fabricObj;
+        const coordsOk =
+          Number.isFinite(f.left) &&
+          Number.isFinite(f.top) &&
+          Number.isFinite(f.scaleX);
+        if (!hasContent) {
+          // eslint-disable-next-line no-console
+          console.error('[buildWatermarks] dropping no-content asset:', a.name);
+        }
+        if (!coordsOk) {
+          // eslint-disable-next-line no-console
+          console.error('[buildWatermarks] dropping invalid-coords asset:', a.name);
+        }
+        return hasContent && coordsOk;
+      })
+      .map((a) => ({
+        name: a.name,
+        url: a.url,
+        dataUrl: a.url ? undefined : a.dataUrl,
+        x: +(a.fabricObj.left / EDITOR_CANVAS_WIDTH).toFixed(4),
+        y: +(a.fabricObj.top / EDITOR_CANVAS_HEIGHT).toFixed(4),
+        scale: +a.fabricObj.scaleX.toFixed(4),
+        rotation: +(a.fabricObj.angle || 0).toFixed(2),
+        opacity: +(a.fabricObj.opacity ?? 1).toFixed(2),
+        invert: a.inverted || undefined,
+      }));
   }
 
   async function handleSave() {
@@ -594,7 +625,6 @@ export function PageEditor({
     setAssets([]);
   }
 
-  // ─── Display values ────────────────────────────────────────────────
   const activeValues = activeObj
     ? {
         posX: Math.round(activeObj.left),
@@ -611,18 +641,12 @@ export function PageEditor({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _ = selTick;
 
-  // ─── Paper preview backdrop CSS ────────────────────────────────────
   const patternBg = buildPatternBackground(paperPattern, paperHex, paperScale);
   const paperIsDark = isPaperDark(paperHex);
   const checkColor = paperIsDark ? '#ffffff' : '#0a0a0f';
 
-  // Page corner radius — when shown alone or as right page of a spread:
-  // rounded only on the outer (right) edges; spine side stays straight.
-  // When shown as left page in a spread, mirror the radius.
-  const PAGE_RADIUS_RIGHT = '0 14px 14px 0';   // single page / right of spread
-  const PAGE_RADIUS_LEFT  = '14px 0 0 14px';   // left of spread (mirror)
-  // Backward compat — the existing canvas style uses PAGE_RADIUS still.
-  // We re-define to a sensible default for the editable canvas:
+  const PAGE_RADIUS_RIGHT = '0 14px 14px 0';
+  const PAGE_RADIUS_LEFT  = '14px 0 0 14px';
   const PAGE_RADIUS = spreadView ? PAGE_RADIUS_RIGHT : '14px';
 
   return (
@@ -635,10 +659,22 @@ export function PageEditor({
         />
       )}
 
+      {loadErrors.length > 0 && (
+        <div className="mb-3 py-2.5 px-4 rounded-lg text-[11px] font-mono border bg-amber-500/10 border-amber-500/30 text-amber-200">
+          ⚠ Could not load {loadErrors.length} watermark(s) from R2: {loadErrors.join(', ')}.
+          This usually means CORS isn&apos;t configured on your R2 bucket.
+          <button
+            type="button"
+            onClick={() => setLoadErrors([])}
+            className="ml-2 underline"
+          >
+            dismiss
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-[260px_1fr_300px] gap-3.5 h-[calc(100vh-200px)]">
-        {/* ── LEFT PANEL ─────────────────────────────────────── */}
         <aside className="glass p-5 flex flex-col gap-6 overflow-y-auto">
-          {/* Watermarks */}
           <div>
             <SectionLabel>Page watermarks</SectionLabel>
             <Button variant="upload" onClick={() => fileInputRef.current?.click()}>
@@ -702,7 +738,6 @@ export function PageEditor({
             </div>
           </div>
 
-          {/* Default opacity for new uploads */}
           <div>
             <SectionLabel>Default opacity</SectionLabel>
             <div className="grid grid-cols-4 gap-1.5">
@@ -713,7 +748,6 @@ export function PageEditor({
                     key={o}
                     type="button"
                     onClick={() => {
-                      // v35: also apply opacity to selected watermark
                       setDefaultOpacity(o);
                       if (activeObj) {
                         updateActive({ opacity: o });
@@ -747,11 +781,9 @@ export function PageEditor({
             </p>
           </div>
 
-          {/* Paper preview — iOS-style controls */}
           <div>
             <SectionLabel>Paper preview</SectionLabel>
 
-            {/* — Paper colour: circles with checkmark, like iOS PaperMenu — */}
             <div className="text-[10px] text-ink-dim font-mono mb-2 tracking-wider">paper color</div>
             <div className="grid grid-cols-4 gap-2 mb-4">
               {PAPER_PRESETS.map((p) => {
@@ -765,7 +797,6 @@ export function PageEditor({
                     aria-label={p.name}
                     aria-pressed={active}
                     className="aspect-square rounded-full border border-glass-border cursor-pointer transition-transform hover:scale-110 relative flex items-center justify-center"
-                    // ⚠️ backgroundColor (NOT shorthand `background`) — see file header.
                     style={{ backgroundColor: p.hex }}
                   >
                     {active && (
@@ -789,13 +820,10 @@ export function PageEditor({
               })}
             </div>
 
-            {/* — Pattern: tall page-shaped tiles, no label, like iOS — */}
             <div className="text-[10px] text-ink-dim font-mono mb-2 tracking-wider">pattern</div>
             <div className="grid grid-cols-4 gap-1.5 mb-4">
               {VALID_PATTERNS.map((pt) => {
                 const active = paperPattern === pt;
-                // Tile pattern at scale=0.4 so several lines/dots fit
-                // inside the small thumb without feeling sparse.
                 const thumbBg = buildPatternBackground(pt, paperHex, 0.4);
                 return (
                   <button
@@ -810,8 +838,6 @@ export function PageEditor({
                         ? 'ring-2 ring-accent ring-offset-0'
                         : 'border border-glass-border hover:border-glass-hairline'
                     }`}
-                    // Page-shaped aspect (slightly taller than wide). 0.725 matches the
-                    // notebook's physical page ratio.
                     style={{
                       aspectRatio: '0.725',
                       backgroundColor: paperHex,
@@ -824,7 +850,6 @@ export function PageEditor({
               })}
             </div>
 
-            {/* — Pattern size: 3 buttons, matches iOS PaperMenu exactly — */}
             <div className="text-[10px] text-ink-dim font-mono mb-2 tracking-wider">pattern size</div>
             <div className="grid grid-cols-3 gap-1.5">
               {[1.0, 1.5, 2.0].map((s) => {
@@ -854,7 +879,6 @@ export function PageEditor({
             </p>
           </div>
 
-          {/* Spread view toggle ─────────────────────────────────── */}
           <div>
             <SectionLabel>View mode</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5">
@@ -867,7 +891,6 @@ export function PageEditor({
                 }`}
                 title="Single page"
               >
-                {/* mini icon: 1 page */}
                 <span style={{ display: 'inline-block', width: 14, height: 18, background: 'currentColor', opacity: 0.6, borderRadius: 2 }} />
                 Single
               </button>
@@ -880,7 +903,6 @@ export function PageEditor({
                 }`}
                 title="Spread (2 pages)"
               >
-                {/* mini icon: 2 pages */}
                 <span style={{ display: 'inline-flex', gap: 1 }}>
                   <span style={{ display: 'inline-block', width: 10, height: 18, background: 'currentColor', opacity: 0.6, borderRadius: '2px 0 0 2px' }} />
                   <span style={{ display: 'inline-block', width: 10, height: 18, background: 'currentColor', opacity: 0.6, borderRadius: '0 2px 2px 0' }} />
@@ -890,7 +912,6 @@ export function PageEditor({
             </div>
           </div>
 
-          {/* Quick position */}
           <div>
             <SectionLabel>Quick position</SectionLabel>
             <div className="grid grid-cols-3 gap-1.5">
@@ -904,7 +925,6 @@ export function PageEditor({
           </div>
         </aside>
 
-        {/* ── CENTER: Single page or spread preview ───────────── */}
         <main className="glass flex items-center justify-center relative overflow-hidden">
           <div
             className="flex items-stretch"
@@ -913,15 +933,6 @@ export function PageEditor({
                 'drop-shadow(0 40px 80px rgba(0,0,0,0.35)) drop-shadow(0 12px 24px rgba(0,0,0,0.25))',
             }}
           >
-            {/* Optional LEFT page (spread view only) — non-editable
-                mirror that shows just the paper colour + pattern, so
-                the user gets the spatial sense of a notebook spread.
-                Watermarks themselves are rendered only on the editable
-                right page; in the real notebook each page gets the same
-                watermark anyway, so the left page would visually echo
-                the right one — we keep it bare here to avoid drawing
-                the same watermark twice and confusing the user about
-                which one is being edited. */}
             {spreadView && (
               <div
                 style={{
@@ -940,8 +951,6 @@ export function PageEditor({
               />
             )}
 
-            {/* RIGHT page (or single page when spread is off) —
-                contains the actual editable Fabric canvas. */}
             <div
               className="overflow-hidden"
               style={{
@@ -971,7 +980,6 @@ export function PageEditor({
             </div>
           </div>
 
-          {/* Caption pill */}
           <div className="absolute bottom-5 left-1/2 -translate-x-1/2 font-mono text-[10px] tracking-[0.1em] text-white/85 py-1.5 px-3.5 bg-black/55 backdrop-blur border border-white/10 rounded-full whitespace-nowrap">
             {spreadView
               ? 'spread view · the right page is editable · all pages get the same watermark'
@@ -979,7 +987,6 @@ export function PageEditor({
           </div>
         </main>
 
-        {/* ── RIGHT PANEL ─────────────────────────────────────── */}
         <aside className="glass p-5 flex flex-col gap-6 overflow-y-auto">
           <div>
             <SectionLabel>Selection</SectionLabel>
@@ -1078,7 +1085,6 @@ export function PageEditor({
         </aside>
       </div>
 
-      {/* ── Bottom toolbar ─────────────────────────────────────── */}
       <div className="flex gap-3 mt-4 justify-end">
         <Button onClick={handleReset}>Reset</Button>
         <Button

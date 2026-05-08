@@ -9,17 +9,6 @@ import { InlineDesignName } from '@/components/designs/InlineDesignName';
 import type { CoverConfigData, CoverAssetRef } from '@/types/cover';
 import { DEFAULT_COVER_CONFIG } from '@/types/cover';
 
-/**
- * /designs/[id]/edit — the editor parametrized by designId.
- *
- * Replaces the old /cover route which assumed "the active CoverConfig".
- * Now every editor session is scoped to one specific Design row, and
- * saves go to PATCH /api/designs/[id] instead of POST /api/cover.
- *
- * Design.assetsJson and pageWatermarksJson share the same shape as
- * the legacy CoverConfig fields, so the editor itself doesn't need to
- * change — only EditorClient learns the new endpoint.
- */
 interface Props {
   params: Promise<{ id: string }>;
 }
@@ -41,10 +30,8 @@ export default async function DesignEditPage({ params }: Props) {
 
   if (!design) notFound();
 
-  // Hydrate into the same CoverConfigData shape the editor already
-  // consumes — keeps the editor unchanged.
   const initialConfig: CoverConfigData = {
-    version: 1, // Designs don't have versions; editor only displays it
+    version: 1,
     canvas: DEFAULT_COVER_CONFIG.canvas,
     cover: {
       backgroundColor: design.backgroundColor,
@@ -72,10 +59,6 @@ export default async function DesignEditPage({ params }: Props) {
       userEmail={session.email}
       isSuperAdmin={session.role === 'SUPERADMIN'}
     >
-      {/* Custom header with editable name — replaces <PageHeader>
-          since the title is interactive (click-to-rename). Mirrors the
-          PageHeader visual structure (eyebrow + h1 + description + actions)
-          but injects InlineDesignName in the h1 slot. */}
       <header className="flex items-start justify-between gap-6 mb-8">
         <div className="min-w-0 flex-1">
           <div className="label mb-2">Library · editing design</div>
@@ -87,13 +70,17 @@ export default async function DesignEditPage({ params }: Props) {
             />
           </h1>
           <p className="mt-3 text-sm text-ink-dim max-w-2xl leading-relaxed">
-            Click the name to rename. Edit the cover and the page watermarks below — saves are independent (Save Cover and Save Watermarks work separately).
+            Click the name to rename. Save Cover and Save Watermarks work
+            independently. When you&apos;re finished, click <strong>Done</strong>
+            to return to your designs.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {design.isDefault && <Badge tone="accent">Default</Badge>}
+          {/* v41 — clear, prominent exit. The previous "← All designs" link
+              was easy to miss, so users felt stuck inside the editor. */}
           <Link href="/designs">
-            <Button variant="ghost">← All designs</Button>
+            <Button variant="primary">Done →</Button>
           </Link>
         </div>
       </header>

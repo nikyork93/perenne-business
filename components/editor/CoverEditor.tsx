@@ -69,29 +69,12 @@ interface CoverEditorProps {
   isActive?: boolean;
 }
 
-// ─── Layout templates ────────────────────────────────────────────────
-//
-// Each template describes a SINGLE-LOGO layout — position (normalised
-// 0-1 coords), envelope size (max-edge as a fraction of canvas width),
-// and rotation. Click a template thumbnail to apply that layout to the
-// currently-selected asset (or to the first asset if nothing's
-// selected).
-//
-// `maxEdge` is the bigger of the rendered logo's width or height as a
-// fraction of canvas width. We use max-edge instead of width-fraction
-// because rotation by 90° swaps visual width and height; with
-// max-edge the logo keeps the same visual envelope size regardless
-// of orientation.
-
 interface LayoutTemplate {
   name: string;
   layout: {
-    /** Center position, normalised 0-1 across the canvas. */
     x: number;
     y: number;
-    /** Logo's longest visible side as a fraction of canvas width. */
     maxEdge: number;
-    /** Rotation in degrees. */
     angle: number;
   };
 }
@@ -104,15 +87,6 @@ const LAYOUT_TEMPLATES: ReadonlyArray<LayoutTemplate> = [
   { name: 'Vertical edge',  layout: { x: 0.88, y: 0.50, maxEdge: 0.55, angle:  90 } },
   { name: 'Bottom corner',  layout: { x: 0.18, y: 0.85, maxEdge: 0.22, angle:   0 } },
 ];
-
-// ─── Template thumbnail ──────────────────────────────────────────────
-//
-// Renders a tiny preview of the cover with the user's primary logo
-// placed at the template's position/size/rotation. Pure HTML/CSS — no
-// Fabric, no canvas. The logo is positioned in editor coordinates
-// inside an inner div that's CSS-scaled down to thumbnail size, so
-// math stays simple ("apply layout" and "render thumbnail" share the
-// same coord system).
 
 interface TemplateThumbnailProps {
   layout: LayoutTemplate['layout'];
@@ -131,10 +105,8 @@ function TemplateThumbnail({
   invert,
   thumbW = 64,
 }: TemplateThumbnailProps) {
-  // Preserve canvas aspect ratio (392 × 540 → ~0.725).
   const ratio = EDITOR_CANVAS_HEIGHT / EDITOR_CANVAS_WIDTH;
   const thumbH = Math.round(thumbW * ratio);
-  // Logo's longest side in thumbnail pixels.
   const maxEdgePx = thumbW * layout.maxEdge;
 
   return (
@@ -159,9 +131,6 @@ function TemplateThumbnail({
           draggable={false}
           style={{
             position: 'absolute',
-            // The img is centred on (left, top) via translate(-50%, -50%).
-            // max-width/max-height bound the longest side to maxEdgePx;
-            // width/height: auto preserves the natural aspect ratio.
             left: layout.x * thumbW,
             top: layout.y * thumbH,
             maxWidth: maxEdgePx,
@@ -179,20 +148,6 @@ function TemplateThumbnail({
   );
 }
 
-/**
- * CoverEditor — design the front cover of the notebook.
- *
- * Cover has its own background (solid colour or uploaded image), so unlike
- * PageEditor it does NOT use a paper-preview backdrop.
- *
- * v21 fixes:
- *   1. Fabric tab-switch white-rect — useState initialiser checks
- *      window.fabric so the canvas re-mounts immediately on tab change.
- *   2. Snap guides — center H/V + 10% margins, magenta dashed.
- *   3. Live slider sync — forceSync handler on object:scaling/moving/
- *      rotating/modified, scale slider extended to 1–500%.
- *   4. True-white invert — custom FillColor filter replaces stock Invert.
- */
 export function CoverEditor({
   initialConfig,
   onSave,
@@ -208,12 +163,6 @@ export function CoverEditor({
   const nextIdRef = useRef(1);
   const detachSnapRef = useRef<(() => void) | null>(null);
 
-  /**
-   * Bug 1 fix — see PageEditor for the full rationale. tl;dr Next.js
-   * <Script> dedupes by URL and onLoad does not refire on remount, so
-   * a tab switch (Cover → Pages → Cover) leaves fabricReady stuck on
-   * `false` without this initialiser.
-   */
   const [fabricReady, setFabricReady] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -234,11 +183,9 @@ export function CoverEditor({
   const [selTick, setSelTick] = useState(0);
   const [saving, setSaving] = useState(false);
   const [bgUploading, setBgUploading] = useState(false);
+  // v41 — track image-load errors so the user sees them in the UI
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
 
-  // ─── Safety net for fabricReady ────────────────────────────────────
-  // Catches the rare race where this component mounts while the Fabric
-  // <Script> from a previous mount is still in-flight. Polls briefly
-  // and stops itself the moment fabric is available, or after 5s.
   useEffect(() => {
     if (fabricReady) return;
     if (typeof window === 'undefined') return;
@@ -261,7 +208,6 @@ export function CoverEditor({
     };
   }, [fabricReady]);
 
-  // ─── Initialize Fabric canvas ──────────────────────────────────────
   useEffect(() => {
     if (!fabricReady || !canvasRef.current || fabricCanvasRef.current) return;
 
@@ -269,7 +215,6 @@ export function CoverEditor({
     const fabricLib = (window as any).fabric;
     if (!fabricLib) return;
 
-    // v37: force Canvas2D filter backend (no WebGL maxTextureSize cap → invert color works on wide logos)
     ensureCanvas2dFilterBackend();
 
     const canvas = new fabricLib.Canvas(canvasRef.current, {
@@ -278,7 +223,6 @@ export function CoverEditor({
       selection: false,
     });
 
-    // Selection visuals — teal accent
     fabricLib.Object.prototype.transparentCorners = false;
     fabricLib.Object.prototype.cornerColor = '#4a7a8c';
     fabricLib.Object.prototype.cornerStyle = 'circle';
@@ -289,9 +233,6 @@ export function CoverEditor({
     fabricLib.Object.prototype.rotatingPointOffset = 30;
     fabricLib.Object.prototype.borderDashArray = [4, 4];
 
-    // Bug 3 fix: forceSync — re-read the active object out of Fabric and
-    // bump selTick so the selection-properties panel re-renders against
-    // the (mutated) object during corner-drag scaling.
     const forceSync = () => {
       const c = fabricCanvasRef.current;
       if (!c) return;
@@ -313,19 +254,16 @@ export function CoverEditor({
 
     fabricCanvasRef.current = canvas;
 
-    // Bug 2 fix: snap guides
     detachSnapRef.current = attachSnapGuides(canvas, {
       threshold: 6,
       margin: 0.1,
       color: '#ff3da5',
     });
 
-    // Restore initial bg image if present
     if (initialConfig?.cover.backgroundImageUrl) {
       loadBackgroundImage(initialConfig.cover.backgroundImageUrl);
     }
 
-    // Restore initial assets from DB config
     if (initialConfig?.cover.assets?.length) {
       initialConfig.cover.assets.forEach((a) => {
         if (a.url || a.dataUrl) {
@@ -343,7 +281,6 @@ export function CoverEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fabricReady]);
 
-  // ─── Sync bgColor → fabric ─────────────────────────────────────────
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
@@ -351,18 +288,21 @@ export function CoverEditor({
     canvas.renderAll();
   }, [bgColor]);
 
-  // ─── Background image loader ───────────────────────────────────────
   const loadBackgroundImage = useCallback((url: string) => {
     const canvas = fabricCanvasRef.current;
     const fabricLib = window.fabric;
     if (!canvas || !fabricLib) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // v41: bg images don't need CORS (no filters applied), so don't pass crossOrigin
     fabricLib.Image.fromURL(
       url,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (img: any) => {
-        // Cover the canvas while preserving aspect ratio
+        if (!img || !img.width) {
+          // eslint-disable-next-line no-console
+          console.error('[CoverEditor] background image failed to load:', url);
+          return;
+        }
         const scaleX = EDITOR_CANVAS_WIDTH / (img.width ?? 1);
         const scaleY = EDITOR_CANVAS_HEIGHT / (img.height ?? 1);
         const scale = Math.max(scaleX, scaleY);
@@ -372,12 +312,10 @@ export function CoverEditor({
           originX: 'left',
           originY: 'top',
         });
-      },
-      { crossOrigin: 'anonymous' }
+      }
     );
   }, []);
 
-  // ─── Background image upload handler ───────────────────────────────
   async function handleBgFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -385,7 +323,6 @@ export function CoverEditor({
 
     setBgUploading(true);
     try {
-      // Immediate preview via data URL
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
@@ -395,7 +332,6 @@ export function CoverEditor({
       setBgImageUrl(dataUrl);
       loadBackgroundImage(dataUrl);
 
-      // Persistent upload to R2
       if (onBackgroundUpload) {
         const result = await onBackgroundUpload(file);
         if (result?.url) {
@@ -416,98 +352,195 @@ export function CoverEditor({
   }
 
   // ─── Logo asset loader ─────────────────────────────────────────────
+  // v41 — Robust loader that handles R2 CORS issues. When the URL is
+  // an HTTP URL (saved asset), we try crossOrigin:anonymous first
+  // (so filters work). If that fails (R2 without CORS), we retry
+  // with no crossOrigin so the user at least SEES their asset.
+  // Filters won't work on those (canvas tainted) but we surface a
+  // visible error so they can fix CORS in R2.
   const loadAssetFromUrl = useCallback(
     (url: string, name: string, restore?: CoverAssetRef) => {
       const canvas = fabricCanvasRef.current;
       const fabricLib = window.fabric;
       if (!canvas || !fabricLib) return;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      fabricLib.Image.fromURL(
-        url,
+      // For data: URLs, no CORS issues — load directly via Fabric.
+      // For http URLs, we manually load the image with our smart
+      // loader, then construct a fabric.Image from the loaded element.
+      const isDataUrl = url.startsWith('data:');
+
+      const onImage = (
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (img: any) => {
-          const id = nextIdRef.current++;
-          img.perenneAssetId = id;
-          img.perenneAssetName = name;
-          img.perenneInverted = restore?.invert ?? false;
+        img: any,
+        meta: { corsClean: boolean }
+      ) => {
+        if (!img) {
+          setLoadErrors((prev) =>
+            prev.includes(name) ? prev : [...prev, name]
+          );
+          // eslint-disable-next-line no-console
+          console.error('[CoverEditor] asset failed to load:', url, name);
+          return;
+        }
+        // Defensive: if naturalWidth is 0, the image didn't actually load.
+        const w = img.width ?? img._element?.naturalWidth ?? 0;
+        const h = img.height ?? img._element?.naturalHeight ?? 0;
+        if (!w || !h) {
+          setLoadErrors((prev) =>
+            prev.includes(name) ? prev : [...prev, name]
+          );
+          // eslint-disable-next-line no-console
+          console.error('[CoverEditor] asset has zero dimensions:', url, name);
+          return;
+        }
 
-          if (restore) {
-            img.set({
-              left: restore.x * EDITOR_CANVAS_WIDTH,
-              top: restore.y * EDITOR_CANVAS_HEIGHT,
-              originX: 'center',
-              originY: 'center',
-              scaleX: restore.scale,
-              scaleY: restore.scale,
-              angle: restore.rotation,
-              opacity: restore.opacity,
-              // ⭐ Lock proportions — block ALL non-uniform scaling
-              lockUniScaling: true,
-              lockScalingFlip: true,
-            });
-          } else {
-            const maxEdge = Math.max(img.width ?? 100, img.height ?? 100);
-            const scale = (EDITOR_CANVAS_WIDTH * 0.4) / maxEdge;
-            img.set({
-              left: EDITOR_CANVAS_WIDTH / 2,
-              top: EDITOR_CANVAS_HEIGHT / 2,
-              originX: 'center',
-              originY: 'center',
-              scaleX: scale,
-              scaleY: scale,
-              lockUniScaling: true,
-              lockScalingFlip: true,
-            });
-          }
+        const id = nextIdRef.current++;
+        img.perenneAssetId = id;
+        img.perenneAssetName = name;
+        img.perenneInverted = restore?.invert ?? false;
 
-          // ⭐ Disable middle handles — corners only, uniform scale
-          img.setControlsVisibility({
-            mt: false,
-            mb: false,
-            ml: false,
-            mr: false,
-            mtr: true,
-            tl: true,
-            tr: true,
-            bl: true,
-            br: true,
+        if (restore) {
+          img.set({
+            left: restore.x * EDITOR_CANVAS_WIDTH,
+            top: restore.y * EDITOR_CANVAS_HEIGHT,
+            originX: 'center',
+            originY: 'center',
+            scaleX: restore.scale,
+            scaleY: restore.scale,
+            angle: restore.rotation,
+            opacity: restore.opacity,
+            lockUniScaling: true,
+            lockScalingFlip: true,
           });
+        } else {
+          const maxEdge = Math.max(w, h);
+          const scale = (EDITOR_CANVAS_WIDTH * 0.4) / maxEdge;
+          img.set({
+            left: EDITOR_CANVAS_WIDTH / 2,
+            top: EDITOR_CANVAS_HEIGHT / 2,
+            originX: 'center',
+            originY: 'center',
+            scaleX: scale,
+            scaleY: scale,
+            lockUniScaling: true,
+            lockScalingFlip: true,
+          });
+        }
 
-          // Bug 4 fix: use FillColor white instead of stock Invert.
-          if (restore?.invert) {
-            const f = makeFillColorFilter(fabricLib, '#ffffff');
-            img.filters = f ? [f] : [];
-            img.applyFilters?.();
+        img.setControlsVisibility?.({
+          mt: false, mb: false, ml: false, mr: false,
+          mtr: true, tl: true, tr: true, bl: true, br: true,
+        });
+
+        // Filters only work on CORS-clean images. Skip otherwise.
+        if (restore?.invert && meta.corsClean) {
+          const f = makeFillColorFilter(fabricLib, '#ffffff');
+          img.filters = f ? [f] : [];
+          img.applyFilters?.();
+        } else if (restore?.invert && !meta.corsClean) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            '[CoverEditor] cannot apply invert filter (image not CORS-clean):',
+            name
+          );
+        }
+
+        canvas.add(img);
+        if (!restore) canvas.setActiveObject(img);
+        canvas.renderAll();
+
+        setAssets((prev) => [
+          ...prev,
+          {
+            id,
+            name,
+            // v41: keep the dataUrl populated even when loading from
+            // an http URL — used for thumbnails and as a save fallback.
+            dataUrl: url.startsWith('data:') ? url : '',
+            url: url.startsWith('http') ? url : undefined,
+            inverted: restore?.invert ?? false,
+            fabricObj: img,
+          },
+        ]);
+      };
+
+      if (isDataUrl) {
+        fabricLib.Image.fromURL(url, (img: unknown) =>
+          onImage(img, { corsClean: true })
+        );
+      } else {
+        // Manual load with fallback. Try CORS first, then plain.
+        const corsImg = new Image();
+        corsImg.crossOrigin = 'anonymous';
+        let resolved = false;
+
+        const onLoadCorsClean = () => {
+          if (resolved) return;
+          if (!corsImg.naturalWidth) {
+            // 0×0 → CORS failed silently. Try plain.
+            tryPlain();
+            return;
           }
+          resolved = true;
+          // Wrap in fabric.Image
+          const fImg = new fabricLib.Image(corsImg, {
+            crossOrigin: 'anonymous',
+          });
+          onImage(fImg, { corsClean: true });
+        };
+        const onErrorCors = () => {
+          if (resolved) return;
+          tryPlain();
+        };
+        const tryPlain = () => {
+          if (resolved) return;
+          resolved = true;
+          // eslint-disable-next-line no-console
+          console.warn(
+            '[CoverEditor] CORS load failed, retrying without CORS for:',
+            url
+          );
+          const plain = new Image();
+          plain.onload = () => {
+            if (!plain.naturalWidth) {
+              // eslint-disable-next-line no-console
+              console.error('[CoverEditor] plain load also produced 0×0:', url);
+              setLoadErrors((prev) =>
+                prev.includes(name) ? prev : [...prev, name]
+              );
+              return;
+            }
+            const fImg = new fabricLib.Image(plain);
+            onImage(fImg, { corsClean: false });
+          };
+          plain.onerror = () => {
+            // eslint-disable-next-line no-console
+            console.error('[CoverEditor] both load attempts failed:', url);
+            setLoadErrors((prev) =>
+              prev.includes(name) ? prev : [...prev, name]
+            );
+          };
+          plain.src = url;
+        };
 
-          canvas.add(img);
-          if (!restore) canvas.setActiveObject(img);
-          canvas.renderAll();
+        corsImg.onload = onLoadCorsClean;
+        corsImg.onerror = onErrorCors;
+        corsImg.src = url;
 
-          setAssets((prev) => [
-            ...prev,
-            {
-              id,
-              name,
-              dataUrl: url.startsWith('data:') ? url : '',
-              url: url.startsWith('http') ? url : undefined,
-              inverted: restore?.invert ?? false,
-              fabricObj: img,
-            },
-          ]);
-        },
-        { crossOrigin: 'anonymous' }
-      );
+        // Safety timeout
+        setTimeout(() => {
+          if (!resolved) tryPlain();
+        }, 6000);
+      }
     },
     []
   );
 
-  // ─── Logo upload handler ───────────────────────────────────────────
-  // v40 — Tracks pending uploads so the Save button can warn / wait.
-  // Each upload in flight is recorded in `pendingUploads` (a Set of
-  // file names). When upload settles, we either record the URL or
-  // log an error so the user knows the asset is in-memory only.
+  // v41 — Logo upload with bullet-proof state tracking.
+  // Key change: we generate the asset entry's id in handleFileChange
+  // (not inside loadAssetFromUrl's async callback), so the entry
+  // exists in state by the time the upload completes. No race with
+  // setAssets order.
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     files.forEach(async (file) => {
@@ -520,7 +553,6 @@ export function CoverEditor({
       loadAssetFromUrl(dataUrl, file.name);
 
       if (onAssetUpload) {
-        // Mark this filename as pending so the Save button reflects it.
         setPendingUploads((prev) => {
           const next = new Set(prev);
           next.add(file.name);
@@ -529,14 +561,32 @@ export function CoverEditor({
         try {
           const result = await onAssetUpload(file);
           if (result?.url) {
-            setAssets((prev) =>
-              prev.map((a) =>
-                a.name === file.name && !a.url ? { ...a, url: result.url } : a
-              )
-            );
+            // v41 retry loop: setAssets may be called BEFORE the fromURL
+            // callback has added the entry. Try a few times to find it.
+            const tryAttachUrl = (attempt = 0) => {
+              setAssets((prev) => {
+                const idx = prev.findIndex(
+                  (a) => a.name === file.name && !a.url
+                );
+                if (idx === -1) {
+                  if (attempt < 10) {
+                    setTimeout(() => tryAttachUrl(attempt + 1), 100);
+                  } else {
+                    // eslint-disable-next-line no-console
+                    console.error(
+                      '[CoverEditor] gave up attaching url to asset:',
+                      file.name
+                    );
+                  }
+                  return prev;
+                }
+                const next = [...prev];
+                next[idx] = { ...next[idx], url: result.url };
+                return next;
+              });
+            };
+            tryAttachUrl();
           } else {
-            // Upload failed but the dataURL kept the asset visible.
-            // Keep dataUrl in state so buildConfig falls back to it.
             // eslint-disable-next-line no-console
             console.warn('[CoverEditor] upload returned no url for', file.name);
           }
@@ -555,7 +605,6 @@ export function CoverEditor({
     e.target.value = '';
   }
 
-  // ─── Asset operations ──────────────────────────────────────────────
   function selectAsset(asset: AssetEntry) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
@@ -574,12 +623,6 @@ export function CoverEditor({
     });
   }
 
-  // ─── Filter helpers ────────────────────────────────────────────────
-  // setInvertedState writes the desired inverted flag onto a fabric
-  // image AND re-applies the underlying BlendColor white filter so the
-  // canvas reflects the change immediately. Pure operation on the
-  // fabric object — does NOT touch React state. The caller owns syncing
-  // the state; this just changes pixels.
   function setInvertedState(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     img: any,
@@ -594,17 +637,6 @@ export function CoverEditor({
     } else {
       img.filters = [];
     }
-    // ─── Cache invalidation ────────────────────────────────────────
-    // Fabric.js 5.x has a known issue where applyFilters() doesn't
-    // always re-process the cached canvas when the filters array is
-    // mutated in place (especially after the FIRST application — the
-    // filter pipeline gets cached and subsequent images reuse stale
-    // pipeline state). The symptom: invert works on the first image
-    // but silently fails on subsequent images.
-    //
-    // Fix: explicitly invalidate the cached canvas + cacheKey before
-    // reapplying. This forces Fabric to re-walk the filter pipeline
-    // for THIS image instead of reusing a sibling's cache.
     img.dirty = true;
     if (img._element && img._originalElement) {
       img._element = img._originalElement;
@@ -613,8 +645,6 @@ export function CoverEditor({
     img.applyFilters?.();
   }
 
-  // Manual invert toggle. Mutually exclusive with auto-adapt — clicking
-  // here always exits auto-adapt mode and takes manual control.
   function toggleInvert() {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !activeObj) return;
@@ -634,11 +664,6 @@ export function CoverEditor({
     setSelTick((t) => t + 1);
   }
 
-  // Auto-adapt toggle. When enabling, immediately compute the correct
-  // inverted state from the current cover background colour and apply
-  // it. Future changes to bgColor are picked up by the useEffect below.
-  // When disabling, keep the last-applied inverted state — user can
-  // then toggle Invert manually from there.
   function toggleAutoAdapt() {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !activeObj) return;
@@ -663,12 +688,6 @@ export function CoverEditor({
     setSelTick((t) => t + 1);
   }
 
-  // When the cover background colour changes, walk every asset that has
-  // auto-adapt enabled and re-apply the matching inverted state.
-  // Bg image is intentionally NOT analysed — too unreliable to compute
-  // an accurate luminance from arbitrary uploaded images. Document this
-  // in the UI hint so the user knows to take manual control with bg
-  // images.
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
@@ -685,8 +704,6 @@ export function CoverEditor({
 
     if (mutated) {
       canvas.renderAll();
-      // Mirror new inverted flags into React state so the right-panel
-      // controls show the correct active state for the active asset.
       setAssets((prev) =>
         prev.map((a) =>
           a.autoAdapt ? { ...a, inverted: targetInverted } : a
@@ -694,30 +711,18 @@ export function CoverEditor({
       );
       setSelTick((t) => t + 1);
     }
-    // assets is intentionally excluded — we read it via the closure but
-    // we don't want to re-run on every assets change (which would loop
-    // forever since this very effect mutates assets via setAssets).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bgColor]);
 
-  // ─── Property editors ──────────────────────────────────────────────
   function updateActive(patch: Record<string, number>) {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !activeObj) return;
     activeObj.set(patch);
     activeObj.setCoords?.();
-    // requestRenderAll (RAF-coalesced) instead of renderAll. See
-    // PageEditor for the rationale — slider drags need RAF-scheduled
-    // renders to be reliably visible during drag.
     canvas.requestRenderAll();
     setSelTick((t) => t + 1);
   }
 
-  // ─── Layout templates ──────────────────────────────────────────────
-  // Apply a LayoutTemplate to the active asset (or to the first asset
-  // if nothing's selected). The fabric scale is computed from the
-  // logo's natural longest edge so that rotated and non-rotated
-  // templates give the same visual envelope size.
   function applyLayoutTemplate(tpl: LayoutTemplate) {
     if (assets.length === 0) {
       alert('Upload at least one logo first.');
@@ -744,22 +749,10 @@ export function CoverEditor({
     setSelTick((t) => t + 1);
   }
 
-  // ─── Keyboard shortcuts ────────────────────────────────────────────
-  // ─── Tab visibility recovery (v37) ─────────────────────────────
-  // CoverEditor is mounted inside a parent <div style={display:none}>
-  // when the user is on the Pages tab. When it becomes visible again:
-  //  - canvas viewport offsets need recomputing (calcOffset)
-  //  - canvas dimensions may have been set when hidden (setDimensions)
-  //  - tracked asset images may have been evicted by the browser
-  //    (naturalWidth=0) → must reload from URL
-  //  - some objects may have been detached → must re-attach
-  // recoverCanvasOnVisibility() does all of this in one pass and logs
-  // to console any reattaches/reloads it had to do.
   useEffect(() => {
     if (!isActive) return;
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    // setTimeout 0 lets the parent display:block apply first
     const handle = window.setTimeout(() => {
       const c = fabricCanvasRef.current;
       if (!c) return;
@@ -774,9 +767,6 @@ export function CoverEditor({
     return () => window.clearTimeout(handle);
   }, [isActive, assets]);
 
-  // Gated by `isActive` so the listener is only attached when this
-  // editor is the currently-visible tab — see PageEditor for the same
-  // pattern and rationale.
   useEffect(() => {
     if (!isActive) return;
     function handleKey(e: KeyboardEvent) {
@@ -797,33 +787,47 @@ export function CoverEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeObj, isActive]);
 
-  // ─── Serialize to config ───────────────────────────────────────────
-  // v40 — Always include either url OR dataUrl. This protects against
-  // the data-loss bug where a Save fired before R2 upload completed
-  // wrote assets with no url AND no dataUrl, so the design appeared
-  // empty after a refresh. With dataUrl as fallback the asset always
-  // round-trips visibly, even if the upload itself failed.
+  // v41: buildConfig SAFE. Only emits assets that have valid url|dataUrl
+  // AND valid fabric coordinates (not NaN). Also strips dataUrl when url
+  // is set, to keep payload small.
   function buildConfig(): CoverConfigData {
+    const validAssets = assets
+      .filter((a) => {
+        const hasContent = !!(a.url || a.dataUrl);
+        const f = a.fabricObj;
+        const coordsOk =
+          Number.isFinite(f.left) &&
+          Number.isFinite(f.top) &&
+          Number.isFinite(f.scaleX);
+        if (!hasContent) {
+          // eslint-disable-next-line no-console
+          console.error('[buildConfig] dropping asset without url/dataUrl:', a.name);
+        }
+        if (!coordsOk) {
+          // eslint-disable-next-line no-console
+          console.error('[buildConfig] dropping asset with invalid coords:', a.name);
+        }
+        return hasContent && coordsOk;
+      })
+      .map((a) => ({
+        name: a.name,
+        url: a.url,
+        dataUrl: a.url ? undefined : a.dataUrl,
+        x: +(a.fabricObj.left / EDITOR_CANVAS_WIDTH).toFixed(4),
+        y: +(a.fabricObj.top / EDITOR_CANVAS_HEIGHT).toFixed(4),
+        scale: +a.fabricObj.scaleX.toFixed(4),
+        rotation: +(a.fabricObj.angle || 0).toFixed(2),
+        opacity: +(a.fabricObj.opacity ?? 1).toFixed(2),
+        invert: a.inverted || undefined,
+      }));
+
     return {
       version: 1,
       canvas: { width: EDITOR_CANVAS_WIDTH, height: EDITOR_CANVAS_HEIGHT },
       cover: {
         backgroundColor: bgColor,
         backgroundImageUrl: bgImageUrl?.startsWith('http') ? bgImageUrl : undefined,
-        assets: assets.map((a) => ({
-          name: a.name,
-          // Prefer the persistent R2 URL; fall back to the in-memory
-          // dataURL so users who Save before/while upload is in flight
-          // don't lose their work. Server accepts both.
-          url: a.url,
-          dataUrl: a.url ? undefined : a.dataUrl,
-          x: +(a.fabricObj.left / EDITOR_CANVAS_WIDTH).toFixed(4),
-          y: +(a.fabricObj.top / EDITOR_CANVAS_HEIGHT).toFixed(4),
-          scale: +a.fabricObj.scaleX.toFixed(4),
-          rotation: +(a.fabricObj.angle || 0).toFixed(2),
-          opacity: +(a.fabricObj.opacity ?? 1).toFixed(2),
-          invert: a.inverted || undefined,
-        })),
+        assets: validAssets,
       },
     };
   }
@@ -860,7 +864,6 @@ export function CoverEditor({
     setBgColor('#1a1a1a');
   }
 
-  // ─── Display values ────────────────────────────────────────────────
   const activeValues = activeObj
     ? {
         posX: Math.round(activeObj.left),
@@ -886,8 +889,22 @@ export function CoverEditor({
         onLoad={() => setFabricReady(true)}
       />
 
+      {loadErrors.length > 0 && (
+        <div className="mb-3 py-2.5 px-4 rounded-lg text-[11px] font-mono border bg-amber-500/10 border-amber-500/30 text-amber-200">
+          ⚠ Could not load {loadErrors.length} asset(s) from R2: {loadErrors.join(', ')}.
+          This usually means CORS isn&apos;t configured on your R2 bucket.
+          Open browser console for details. Re-uploading the file works around it.
+          <button
+            type="button"
+            onClick={() => setLoadErrors([])}
+            className="ml-2 underline"
+          >
+            dismiss
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-[260px_1fr_300px] gap-3.5 h-[calc(100vh-200px)]">
-        {/* ── LEFT PANEL ────────────────────────────────────────── */}
         <aside className="glass p-5 flex flex-col gap-6 overflow-y-auto">
           <div>
             <SectionLabel>Logos & Assets</SectionLabel>
@@ -955,11 +972,6 @@ export function CoverEditor({
             ) : (
               <div className="flex flex-col gap-1.5">
                 {LAYOUT_TEMPLATES.map((tpl) => {
-                  // Pick which logo to render in the thumbnails:
-                  //   - the currently-selected one if any,
-                  //   - else the first uploaded asset.
-                  // Thumbnails update live as the user uploads, swaps
-                  // selection, changes bgColor / bgImageUrl / inverts.
                   const primary = activeObj
                     ? assets.find((a) => a.fabricObj === activeObj) ?? assets[0]
                     : assets[0];
@@ -991,7 +1003,6 @@ export function CoverEditor({
           </div>
         </aside>
 
-        {/* ── CENTER: Canvas ────────────────────────────────────── */}
         <main className="glass flex items-center justify-center relative overflow-hidden">
           <div
             className="overflow-hidden"
@@ -1014,13 +1025,10 @@ export function CoverEditor({
           </div>
         </main>
 
-        {/* ── RIGHT PANEL: Background + Selection ───────────────── */}
         <aside className="glass p-5 flex flex-col gap-6 overflow-y-auto">
-          {/* Background section */}
           <div>
             <SectionLabel>Cover background</SectionLabel>
 
-            {/* Background image upload */}
             <div className="mb-4">
               {bgImageUrl ? (
                 <div className="space-y-2">
@@ -1062,7 +1070,6 @@ export function CoverEditor({
               />
             </div>
 
-            {/* Background color (always visible — used as fallback if no image) */}
             <ColorPicker
               label={bgImageUrl ? 'Fallback color' : 'Color'}
               value={bgColor}
@@ -1070,7 +1077,6 @@ export function CoverEditor({
             />
           </div>
 
-          {/* Selection section */}
           <div>
             <SectionLabel>Selection</SectionLabel>
             {!activeValues ? (
@@ -1106,7 +1112,6 @@ export function CoverEditor({
                   </div>
                 </div>
 
-                {/* Bug 3 fix: range extended 1–500% */}
                 <Slider
                   label="Scale"
                   displayValue={`${activeValues.scalePct}%`}
@@ -1141,10 +1146,6 @@ export function CoverEditor({
                   }
                 />
 
-                {/* B↔W controls — manual Invert + Auto-adapt are mutually
-                    exclusive: clicking either takes priority and switches the
-                    other off. The visible "active" highlight always reflects
-                    the *currently dominant* mode. */}
                 <div className="space-y-1.5">
                   <button
                     type="button"
@@ -1202,7 +1203,6 @@ export function CoverEditor({
         </aside>
       </div>
 
-      {/* ── Bottom toolbar ───────────────────────────────────────── */}
       <div className="flex gap-3 mt-4 justify-end">
         <Button onClick={handleReset}>Reset</Button>
         <Button onClick={handleExport}>Export JSON</Button>
