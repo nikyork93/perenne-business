@@ -9,6 +9,7 @@ import {
   type CoverAssetRef,
 } from '@/types/cover';
 import { attachSnapGuides, makeFillColorFilter } from './snapGuides';
+import { ensureCanvas2dFilterBackend, recoverCanvasOnVisibility } from '@/lib/fabric-backend';
 import {
   PAPER_PRESETS,
   DEFAULT_PAPER_HEX,
@@ -228,6 +229,9 @@ export function PageEditor({
     const fabricLib = (window as any).fabric;
     if (!fabricLib) return;
 
+    // v37: force Canvas2D filter backend (no WebGL maxTextureSize cap → invert color works on wide logos)
+    ensureCanvas2dFilterBackend();
+
     const canvas = new fabricLib.Canvas(canvasRef.current, {
       backgroundColor: 'transparent',
       preserveObjectStacking: true,
@@ -340,11 +344,9 @@ export function PageEditor({
           });
 
           if (restore?.invert) {
-            // v35: defer to applyInvertedToObject (uses canvas2d, no WebGL cap)
-            queueMicrotask(() => {
-              applyInvertedToObject(img, true);
-              canvas.requestRenderAll?.();
-            });
+            const f = makeFillColorFilter(fabricLib, '#ffffff');
+            img.filters = f ? [f] : [];
+            img.applyFilters?.();
           }
 
           canvas.add(img);
@@ -416,11 +418,20 @@ export function PageEditor({
 
   function toggleInvert() {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !activeObj) return;
+    const fabricLib = window.fabric;
+    if (!canvas || !fabricLib || !activeObj) return;
 
     const isInverted = !activeObj.perenneInverted;
-    applyInvertedToObject(activeObj, isInverted);
-    canvas.requestRenderAll();
+    activeObj.perenneInverted = isInverted;
+
+    if (isInverted) {
+      const f = makeFillColorFilter(fabricLib, '#ffffff');
+      activeObj.filters = f ? [f] : [];
+    } else {
+      activeObj.filters = [];
+    }
+    activeObj.applyFilters?.();
+    canvas.renderAll();
 
     setAssets((prev) =>
       prev.map((a) =>
@@ -428,50 +439,6 @@ export function PageEditor({
       )
     );
     setSelTick((t) => t + 1);
-  }
-
-  // ─── Manual invert helper (v35) — see CoverEditor for rationale ───
-  function buildInvertedElement(orig: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement {
-    const w = (orig as HTMLImageElement).naturalWidth || orig.width;
-    const h = (orig as HTMLImageElement).naturalHeight || orig.height;
-    const out = document.createElement('canvas');
-    out.width = w;
-    out.height = h;
-    const ctx = out.getContext('2d');
-    if (!ctx) return out;
-    ctx.drawImage(orig as CanvasImageSource, 0, 0, w, h);
-    const data = ctx.getImageData(0, 0, w, h);
-    const px = data.data;
-    for (let i = 0; i < px.length; i += 4) {
-      if (px[i + 3] > 0) {
-        px[i] = 255;
-        px[i + 1] = 255;
-        px[i + 2] = 255;
-      }
-    }
-    ctx.putImageData(data, 0, 0);
-    return out;
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function applyInvertedToObject(img: any, inverted: boolean) {
-    img.perenneInverted = inverted;
-    img.filters = [];
-    if (inverted) {
-      if (!img._perenneInvertedEl && img._originalElement) {
-        img._perenneInvertedEl = buildInvertedElement(img._originalElement);
-      }
-      if (img._perenneInvertedEl) {
-        img._element = img._perenneInvertedEl;
-      }
-    } else if (img._originalElement) {
-      img._element = img._originalElement;
-    }
-    img.dirty = true;
-    img.objectCaching = false;
-    img.statefullCache = false;
-    img.cacheKey = `${img.perenneAssetId ?? 'x'}_${inverted ? 'inv' : 'orig'}_${Date.now()}`;
-    img.setCoords?.();
   }
 
   function updateActive(patch: Record<string, number>) {
@@ -518,6 +485,33 @@ export function PageEditor({
   }
 
   // ─── Keyboard shortcuts ────────────────────────────────────────────
+  // ─── Tab visibility recovery (v37) ─────────────────────────────
+  // PageEditor sits inside a parent <div style={display:none}> while
+  // the user is on the Cover tab. On visibility return:
+  //  - canvas viewport offsets need recomputing
+  //  - asset images may have been evicted (naturalWidth=0) and must
+  //    be reloaded from URL — this is the most common cause of the
+  //    "logo appears in sidebar but not on canvas" bug
+  //  - detached objects re-attached
+  // recoverCanvasOnVisibility() handles all of this and logs results.
+  useEffect(() => {
+    if (!isActive) return;
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    const handle = window.setTimeout(() => {
+      const c = fabricCanvasRef.current;
+      if (!c) return;
+      void recoverCanvasOnVisibility({
+        canvas: c,
+        assets,
+        width: EDITOR_CANVAS_WIDTH,
+        height: EDITOR_CANVAS_HEIGHT,
+        label: 'PageEditor',
+      });
+    }, 50);
+    return () => window.clearTimeout(handle);
+  }, [isActive, assets]);
+
   // Gated by `isActive` so the listener is only attached when this
   // editor is the currently-visible tab. Without this guard, pressing
   // Arrow / Delete on the active tab would also move/delete the active
@@ -694,10 +688,7 @@ export function PageEditor({
                     key={o}
                     type="button"
                     onClick={() => {
-                      // v35: always store the new default for new uploads,
-                      // AND if a watermark is currently selected, apply the
-                      // opacity to it immediately (otherwise these buttons
-                      // are confusing — the user expects them to "do something").
+                      // v35: also apply opacity to selected watermark
                       setDefaultOpacity(o);
                       if (activeObj) {
                         updateActive({ opacity: o });
@@ -717,8 +708,8 @@ export function PageEditor({
                     aria-pressed={active}
                     title={
                       activeObj
-                        ? `Set opacity to ${Math.round(o * 100)}% for the selected watermark and use this default for new uploads`
-                        : `Use ${Math.round(o * 100)}% as default opacity for new watermark uploads`
+                        ? `Set ${Math.round(o * 100)}% on selected + use as default`
+                        : `Use ${Math.round(o * 100)}% as default for new uploads`
                     }
                   >
                     {Math.round(o * 100)}%

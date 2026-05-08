@@ -12,6 +12,7 @@ import {
   type CoverAssetRef,
 } from '@/types/cover';
 import { attachSnapGuides, makeFillColorFilter } from './snapGuides';
+import { ensureCanvas2dFilterBackend, recoverCanvasOnVisibility } from '@/lib/fabric-backend';
 import { isPaperDark } from './paperPresets';
 
 // Fabric.js loaded from CDN via <Script>; declare global type
@@ -266,6 +267,9 @@ export function CoverEditor({
     const fabricLib = (window as any).fabric;
     if (!fabricLib) return;
 
+    // v37: force Canvas2D filter backend (no WebGL maxTextureSize cap → invert color works on wide logos)
+    ensureCanvas2dFilterBackend();
+
     const canvas = new fabricLib.Canvas(canvasRef.current, {
       backgroundColor: bgColor,
       preserveObjectStacking: true,
@@ -468,19 +472,11 @@ export function CoverEditor({
             br: true,
           });
 
-          // v35: defer invert restoration until after the image is on
-          // canvas — calls setInvertedState() which uses the manual
-          // canvas2d tinting helper (no WebGL truncation).
+          // Bug 4 fix: use FillColor white instead of stock Invert.
           if (restore?.invert) {
-            // Mark for invert; setInvertedState will lazily build the
-            // tinted element. Note: we can't call setInvertedState here
-            // because of TDZ — it's defined later in the component.
-            // Instead set the flag and re-invert on next tick.
-            img.perenneInverted = true;
-            queueMicrotask(() => {
-              setInvertedState(img, true);
-              canvas.requestRenderAll?.();
-            });
+            const f = makeFillColorFilter(fabricLib, '#ffffff');
+            img.filters = f ? [f] : [];
+            img.applyFilters?.();
           }
 
           canvas.add(img);
@@ -550,77 +546,43 @@ export function CoverEditor({
     });
   }
 
-  // ─── Filter helpers (v35 — manual canvas inversion) ──────────────
-  //
-  // Why manual: Fabric 5's BlendColor filter routes through a WebGL
-  // backend with a default maxTextureSize of 2048. When an inverted
-  // logo's *original* image width exceeds that (e.g. a 4096×600 wide
-  // wordmark), the filter pipeline silently downscales+crops the
-  // result, so on the canvas the user sees only the leftmost ~2048px
-  // worth of the logo. Setting objectCaching=false didn't help because
-  // the truncation happens inside applyFilters() before caching.
-  //
-  // Solution: do the tint manually on a canvas2d offscreen buffer at
-  // the original image's natural dimensions. This bypasses WebGL
-  // entirely. For our use case (preserving alpha, recoloring all
-  // non-transparent pixels white) the math is trivial:
-  //
-  //   for each pixel: if alpha > 0 → set rgb to (255,255,255)
-  //
-  // We cache the inverted canvas on the fabric image so toggling
-  // doesn't re-process every time.
-  function buildInvertedElement(orig: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement {
-    const w = (orig as HTMLImageElement).naturalWidth || orig.width;
-    const h = (orig as HTMLImageElement).naturalHeight || orig.height;
-    const out = document.createElement('canvas');
-    out.width = w;
-    out.height = h;
-    const ctx = out.getContext('2d');
-    if (!ctx) return out;
-    ctx.drawImage(orig as CanvasImageSource, 0, 0, w, h);
-    const data = ctx.getImageData(0, 0, w, h);
-    const px = data.data;
-    for (let i = 0; i < px.length; i += 4) {
-      if (px[i + 3] > 0) {
-        px[i] = 255;
-        px[i + 1] = 255;
-        px[i + 2] = 255;
-      }
-    }
-    ctx.putImageData(data, 0, 0);
-    return out;
-  }
-
+  // ─── Filter helpers ────────────────────────────────────────────────
+  // setInvertedState writes the desired inverted flag onto a fabric
+  // image AND re-applies the underlying BlendColor white filter so the
+  // canvas reflects the change immediately. Pure operation on the
+  // fabric object — does NOT touch React state. The caller owns syncing
+  // the state; this just changes pixels.
   function setInvertedState(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     img: any,
     inverted: boolean
   ) {
+    const fabricLib = window.fabric;
+    if (!fabricLib) return;
     img.perenneInverted = inverted;
-    // Clear filters — we do the work manually now
-    img.filters = [];
-
-    // Lazy-build (and cache) the inverted canvas on first invert
     if (inverted) {
-      if (!img._perenneInvertedEl) {
-        const orig = img._originalElement;
-        if (orig) {
-          img._perenneInvertedEl = buildInvertedElement(orig);
-        }
-      }
-      if (img._perenneInvertedEl) {
-        img._element = img._perenneInvertedEl;
-      }
-    } else if (img._originalElement) {
+      const f = makeFillColorFilter(fabricLib, '#ffffff');
+      img.filters = f ? [f] : [];
+    } else {
+      img.filters = [];
+    }
+    // ─── Cache invalidation ────────────────────────────────────────
+    // Fabric.js 5.x has a known issue where applyFilters() doesn't
+    // always re-process the cached canvas when the filters array is
+    // mutated in place (especially after the FIRST application — the
+    // filter pipeline gets cached and subsequent images reuse stale
+    // pipeline state). The symptom: invert works on the first image
+    // but silently fails on subsequent images.
+    //
+    // Fix: explicitly invalidate the cached canvas + cacheKey before
+    // reapplying. This forces Fabric to re-walk the filter pipeline
+    // for THIS image instead of reusing a sibling's cache.
+    img.dirty = true;
+    if (img._element && img._originalElement) {
       img._element = img._originalElement;
     }
-
-    // Force re-render
-    img.dirty = true;
-    img.objectCaching = false;
-    img.statefullCache = false;
     img.cacheKey = `${img.perenneAssetId ?? 'x'}_${inverted ? 'inv' : 'orig'}_${Date.now()}`;
-    img.setCoords?.();
+    img.applyFilters?.();
   }
 
   // Manual invert toggle. Mutually exclusive with auto-adapt — clicking
@@ -755,6 +717,35 @@ export function CoverEditor({
   }
 
   // ─── Keyboard shortcuts ────────────────────────────────────────────
+  // ─── Tab visibility recovery (v37) ─────────────────────────────
+  // CoverEditor is mounted inside a parent <div style={display:none}>
+  // when the user is on the Pages tab. When it becomes visible again:
+  //  - canvas viewport offsets need recomputing (calcOffset)
+  //  - canvas dimensions may have been set when hidden (setDimensions)
+  //  - tracked asset images may have been evicted by the browser
+  //    (naturalWidth=0) → must reload from URL
+  //  - some objects may have been detached → must re-attach
+  // recoverCanvasOnVisibility() does all of this in one pass and logs
+  // to console any reattaches/reloads it had to do.
+  useEffect(() => {
+    if (!isActive) return;
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    // setTimeout 0 lets the parent display:block apply first
+    const handle = window.setTimeout(() => {
+      const c = fabricCanvasRef.current;
+      if (!c) return;
+      void recoverCanvasOnVisibility({
+        canvas: c,
+        assets,
+        width: EDITOR_CANVAS_WIDTH,
+        height: EDITOR_CANVAS_HEIGHT,
+        label: 'CoverEditor',
+      });
+    }, 50);
+    return () => window.clearTimeout(handle);
+  }, [isActive, assets]);
+
   // Gated by `isActive` so the listener is only attached when this
   // editor is the currently-visible tab — see PageEditor for the same
   // pattern and rationale.

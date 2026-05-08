@@ -3,21 +3,23 @@ set -e
 cd "$(dirname "$0")"
 
 echo "═══════════════════════════════════════════════════════════"
-echo "v35 — UI fixes + invert color rewrite"
+echo "v37 — invert color (Canvas2D backend) + tab visibility recovery"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Fix:"
-echo "  1. Login: forza dark theme (data-theme=dark) cosi i testi"
-echo "     restano leggibili anche con sistema in light mode"
-echo "  2. Invert color: rewrite con canvas2D manuale (bypassa il"
-echo "     limite WebGL maxTextureSize 2048 di Fabric)"
-echo "  3. Default opacity buttons: ora applicano l'opacita anche"
-echo "     al watermark selezionato (oltre a impostarla per i nuovi)"
-echo "  4. DesignThumbnail: spread piu' grande (200px vs 140), con"
-echo "     frame leggero e ombra"
-echo "  5. Pagine /codes /admin/codes /admin/codes/new: ora usano"
-echo "     PageHeader (font-display italic) coerente con resto app"
-echo "  6. Modal backdrop-blur + token coerenti (no più bg-surface-1)"
+echo "Approccio nuovo:"
+echo "  1. INVERT: forza Canvas2dFilterBackend di Fabric (API ufficiale)"
+echo "     prima di creare il canvas. Il backend WebGL aveva un cap di"
+echo "     2048px che troncava i loghi larghi sul canvas live."
+echo ""
+echo "  2. LOGHI SCOLLEGATI nel cambio tab: nuovo helper"
+echo "     recoverCanvasOnVisibility() che al ritorno della visibilita':"
+echo "       - ricalcola dimensioni e offset del canvas"
+echo "       - re-attacca asset eventualmente rimossi"
+echo "       - rileva immagini 'evicted' dal browser (naturalWidth=0)"
+echo "         e le ricarica da URL preservando posizione/scala/inversione"
+echo "       - logga in console quanti reattach/reload ha fatto"
+echo ""
+echo "  Carry-over fix di v35 (login, design grid, modal, typography)."
 echo ""
 echo "Premi INVIO per continuare, Ctrl+C per annullare."
 read -r _
@@ -25,43 +27,53 @@ read -r _
 echo "═══════════════════════════════════════════════════════════"
 echo "STEP 1/2: copia file"
 echo "═══════════════════════════════════════════════════════════"
-mkdir -p app/login app/codes app/admin/codes app/admin/codes/new
+mkdir -p lib app/login app/codes app/admin/codes app/admin/codes/new
 mkdir -p components/editor components/designs components/admin
 
-cp -v _v35_payload/app/login/page.tsx app/login/page.tsx
-cp -v _v35_payload/app/codes/page.tsx app/codes/page.tsx
-cp -v _v35_payload/app/admin/codes/page.tsx app/admin/codes/page.tsx
-cp -v _v35_payload/app/admin/codes/new/page.tsx app/admin/codes/new/page.tsx
-cp -v _v35_payload/components/editor/CoverEditor.tsx components/editor/CoverEditor.tsx
-cp -v _v35_payload/components/editor/PageEditor.tsx components/editor/PageEditor.tsx
-cp -v _v35_payload/components/designs/DesignThumbnail.tsx components/designs/DesignThumbnail.tsx
-cp -v _v35_payload/components/designs/DesignsList.tsx components/designs/DesignsList.tsx
-cp -v _v35_payload/components/admin/NewBatchForm.tsx components/admin/NewBatchForm.tsx
-cp -v _v35_payload/components/CodesTable.tsx components/CodesTable.tsx
+cp -v _v37_payload/lib/fabric-backend.ts lib/fabric-backend.ts
+cp -v _v37_payload/components/editor/CoverEditor.tsx components/editor/CoverEditor.tsx
+cp -v _v37_payload/components/editor/PageEditor.tsx components/editor/PageEditor.tsx
+cp -v _v37_payload/app/login/page.tsx app/login/page.tsx
+cp -v _v37_payload/app/codes/page.tsx app/codes/page.tsx
+cp -v _v37_payload/app/admin/codes/page.tsx app/admin/codes/page.tsx
+cp -v _v37_payload/app/admin/codes/new/page.tsx app/admin/codes/new/page.tsx
+cp -v _v37_payload/components/designs/DesignThumbnail.tsx components/designs/DesignThumbnail.tsx
+cp -v _v37_payload/components/designs/DesignsList.tsx components/designs/DesignsList.tsx
+cp -v _v37_payload/components/admin/NewBatchForm.tsx components/admin/NewBatchForm.tsx
+cp -v _v37_payload/components/CodesTable.tsx components/CodesTable.tsx
 
-rm -rf _v35_payload
+rm -rf _v37_payload
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
 echo "STEP 2/2: git commit + push"
 echo "═══════════════════════════════════════════════════════════"
 git add -A
-git commit -m "v35: invert canvas2d + opacity buttons + page typography + modal blur"
+git commit -m "v37: Canvas2D filter backend + visibility recovery (invert + asset reload)"
 git push
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "FATTO! Aspetta deploy verde su Vercel."
+echo "FATTO!"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Test:"
-echo "  1. Login: testi e logo bianchi ben leggibili"
-echo "  2. Editor cover: carica logo wide (es STELVIO collection),"
-echo "     click Invert -> il logo COMPLETO diventa bianco"
-echo "  3. Editor pagina: seleziona un watermark, click 10/20/30/50%"
-echo "     -> opacità del watermark cambia istantaneamente"
-echo "  4. /designs: griglia con thumbnail spread piu' grandi e curate"
-echo "  5. /codes: titolo in font-display italic come le altre pagine"
-echo "  6. /codes -> Import CSV / Send emails / Assign:"
-echo "     dialog con backdrop blurrato e sfondo glass leggibile"
+echo "Dopo deploy verde + HARD REFRESH (Cmd+Shift+R):"
+echo ""
+echo "TEST INVERT:"
+echo "  1. Editor cover: carica un logo wide (es STELVIO collection)"
+echo "  2. Click 'Invert color'"
+echo "  3. Console deve mostrare:"
+echo "     '[perenne] Fabric filterBackend → Canvas2dFilterBackend'"
+echo "  4. Il logo INTERO deve diventare bianco, niente troncamenti"
+echo ""
+echo "TEST TAB VISIBILITY:"
+echo "  1. Editor: carica 1-2 watermark nel tab Pages"
+echo "  2. Vai su Cover, fai qualcosa, torna su Pages"
+echo "  3. I watermark DEVONO essere visibili sul canvas"
+echo "  4. Console deve mostrare:"
+echo "     '[PageEditor] visibility recovery: reattached=X reloaded=Y'"
+echo "     (se ha dovuto fare qualcosa)"
+echo "  5. Stesso test al contrario (Cover -> Pages -> Cover)"
+echo "  6. Se ancora succede, mandami screenshot della console di Chrome"
+echo "     per debug — i log diranno esattamente cosa sta succedendo"
 echo ""
