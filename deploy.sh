@@ -3,23 +3,21 @@ set -e
 cd "$(dirname "$0")"
 
 echo "═══════════════════════════════════════════════════════════"
-echo "v37 — invert color (Canvas2D backend) + tab visibility recovery"
+echo "v38 — Perenne logo nelle email codice"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Approccio nuovo:"
-echo "  1. INVERT: forza Canvas2dFilterBackend di Fabric (API ufficiale)"
-echo "     prima di creare il canvas. Il backend WebGL aveva un cap di"
-echo "     2048px che troncava i loghi larghi sul canvas live."
+echo "Cosa fa:"
+echo "  1. Nuovo endpoint pubblico /api/brand/perenne-logo che serve"
+echo "     l'SVG (variant=extended|symbol, color custom). Cache 1y."
+echo "     Accessibile da qualsiasi client email come <img src>."
 echo ""
-echo "  2. LOGHI SCOLLEGATI nel cambio tab: nuovo helper"
-echo "     recoverCanvasOnVisibility() che al ritorno della visibilita':"
-echo "       - ricalcola dimensioni e offset del canvas"
-echo "       - re-attacca asset eventualmente rimossi"
-echo "       - rileva immagini 'evicted' dal browser (naturalWidth=0)"
-echo "         e le ricarica da URL preservando posizione/scala/inversione"
-echo "       - logga in console quanti reattach/reload ha fatto"
+echo "  2. Email template ora ha:"
+echo "     - HEADER: logo 'Perenne note' wordmark sopra il greeting"
+echo "     - FOOTER: micro-symbol P + 'THE PERENNE TEAM' (mono)"
+echo "     - Testo body rinforzato: 'Perenne Note' bold dove citato"
 echo ""
-echo "  Carry-over fix di v35 (login, design grid, modal, typography)."
+echo "  3. Endpoint distribute ora passa l'origin reale al template,"
+echo "     cosi' funziona anche su preview deploy (non solo prod)"
 echo ""
 echo "Premi INVIO per continuare, Ctrl+C per annullare."
 read -r _
@@ -27,29 +25,22 @@ read -r _
 echo "═══════════════════════════════════════════════════════════"
 echo "STEP 1/2: copia file"
 echo "═══════════════════════════════════════════════════════════"
-mkdir -p lib app/login app/codes app/admin/codes app/admin/codes/new
-mkdir -p components/editor components/designs components/admin
+mkdir -p lib
+mkdir -p app/api/brand/perenne-logo
+mkdir -p app/api/codes/distribute
 
-cp -v _v37_payload/lib/fabric-backend.ts lib/fabric-backend.ts
-cp -v _v37_payload/components/editor/CoverEditor.tsx components/editor/CoverEditor.tsx
-cp -v _v37_payload/components/editor/PageEditor.tsx components/editor/PageEditor.tsx
-cp -v _v37_payload/app/login/page.tsx app/login/page.tsx
-cp -v _v37_payload/app/codes/page.tsx app/codes/page.tsx
-cp -v _v37_payload/app/admin/codes/page.tsx app/admin/codes/page.tsx
-cp -v _v37_payload/app/admin/codes/new/page.tsx app/admin/codes/new/page.tsx
-cp -v _v37_payload/components/designs/DesignThumbnail.tsx components/designs/DesignThumbnail.tsx
-cp -v _v37_payload/components/designs/DesignsList.tsx components/designs/DesignsList.tsx
-cp -v _v37_payload/components/admin/NewBatchForm.tsx components/admin/NewBatchForm.tsx
-cp -v _v37_payload/components/CodesTable.tsx components/CodesTable.tsx
+cp -v _v38_payload/lib/code-email-template.ts lib/code-email-template.ts
+cp -v _v38_payload/app/api/brand/perenne-logo/route.ts app/api/brand/perenne-logo/route.ts
+cp -v _v38_payload/app/api/codes/distribute/route.ts app/api/codes/distribute/route.ts
 
-rm -rf _v37_payload
+rm -rf _v38_payload
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
 echo "STEP 2/2: git commit + push"
 echo "═══════════════════════════════════════════════════════════"
 git add -A
-git commit -m "v37: Canvas2D filter backend + visibility recovery (invert + asset reload)"
+git commit -m "v38: Perenne logo in code distribution emails + public brand SVG endpoint"
 git push
 
 echo ""
@@ -57,23 +48,13 @@ echo "════════════════════════�
 echo "FATTO!"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Dopo deploy verde + HARD REFRESH (Cmd+Shift+R):"
-echo ""
-echo "TEST INVERT:"
-echo "  1. Editor cover: carica un logo wide (es STELVIO collection)"
-echo "  2. Click 'Invert color'"
-echo "  3. Console deve mostrare:"
-echo "     '[perenne] Fabric filterBackend → Canvas2dFilterBackend'"
-echo "  4. Il logo INTERO deve diventare bianco, niente troncamenti"
-echo ""
-echo "TEST TAB VISIBILITY:"
-echo "  1. Editor: carica 1-2 watermark nel tab Pages"
-echo "  2. Vai su Cover, fai qualcosa, torna su Pages"
-echo "  3. I watermark DEVONO essere visibili sul canvas"
-echo "  4. Console deve mostrare:"
-echo "     '[PageEditor] visibility recovery: reattached=X reloaded=Y'"
-echo "     (se ha dovuto fare qualcosa)"
-echo "  5. Stesso test al contrario (Cover -> Pages -> Cover)"
-echo "  6. Se ancora succede, mandami screenshot della console di Chrome"
-echo "     per debug — i log diranno esattamente cosa sta succedendo"
+echo "Test:"
+echo "  1. Apri https://business.perenne.app/api/brand/perenne-logo"
+echo "     -> dovresti vedere il wordmark 'Perenne note' nero su sfondo"
+echo "        bianco (variant=extended di default)"
+echo "  2. Prova https://business.perenne.app/api/brand/perenne-logo?variant=symbol&color=4a7a8c"
+echo "     -> dovresti vedere il simbolo P in teal"
+echo "  3. Vai a /codes -> seleziona codici assegnati -> Send emails"
+echo "     -> apri email -> Perenne wordmark in alto + simbolo nel footer"
+echo "     -> in Gmail web potrebbe servire 'Show images' la prima volta"
 echo ""

@@ -1,6 +1,13 @@
 /**
  * Email template for code distribution.
  * Sent when a company admin distributes a NotebookCode to a recipient.
+ *
+ * v38: brand the email with Perenne logo (header + footer wordmark) so
+ * the recipient knows what app the code is for, even before reading.
+ * Logo is loaded from /api/brand/perenne-logo (public endpoint, 1y
+ * cache, served as SVG with CORS open) — works in Apple Mail, Gmail
+ * (after "Show images"), Outlook 2019+, iOS Mail. We always set the
+ * absolute URL so embedded mail clients can fetch it.
  */
 
 interface CodeEmailParams {
@@ -9,13 +16,25 @@ interface CodeEmailParams {
   code: string;
   expiresLabel?: string | null;
   customMessage?: string | null;
+  /**
+   * Absolute origin used when building the logo URL. Falls back to
+   * https://business.perenne.app if not provided. Caller (the
+   * distribute route) can pass req.nextUrl.origin for non-prod envs.
+   */
+  origin?: string;
 }
+
+const DEFAULT_ORIGIN = 'https://business.perenne.app';
 
 export function codeDistributionEmail(p: CodeEmailParams): {
   subject: string;
   html: string;
   text: string;
 } {
+  const origin = p.origin?.replace(/\/$/, '') || DEFAULT_ORIGIN;
+  const logoExtendedUrl = `${origin}/api/brand/perenne-logo?variant=extended&color=1a1a1a`;
+  const logoSymbolUrl = `${origin}/api/brand/perenne-logo?variant=symbol&color=8a8a85`;
+
   const greeting = p.recipientName ? `Hi ${p.recipientName},` : 'Hi there,';
   const expiry = p.expiresLabel ? `\n\nThis code expires on ${p.expiresLabel}.` : '';
   const customLine = p.customMessage ? `\n${p.customMessage}\n` : '';
@@ -50,16 +69,29 @@ If you have questions, reach out to your IT administrator at ${p.companyName}.
     <tr>
       <td align="center">
         <table role="presentation" width="520" cellspacing="0" cellpadding="0" style="background:#ffffff;border-radius:16px;padding:40px;max-width:520px;">
+          <!-- HEADER: Perenne wordmark -->
           <tr>
-            <td>
-              <div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#8a8a85;font-family:'SF Mono',Menlo,monospace;margin-bottom:24px;">
+            <td style="padding-bottom:32px;border-bottom:1px solid #ececec;">
+              <img
+                src="${logoExtendedUrl}"
+                alt="Perenne note"
+                width="180"
+                height="22"
+                style="display:block;height:22px;width:auto;border:0;outline:0;"
+              />
+            </td>
+          </tr>
+          <!-- BODY -->
+          <tr>
+            <td style="padding-top:32px;">
+              <div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#8a8a85;font-family:'SF Mono',Menlo,monospace;margin-bottom:20px;">
                 ${escapeHtml(p.companyName)}
               </div>
               <h1 style="margin:0 0 24px 0;font-size:26px;font-weight:300;line-height:1.3;color:#1a1a1a;">
                 ${greeting}
               </h1>
               <p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;color:#3a3a3a;">
-                ${escapeHtml(p.companyName)} has issued you a Perenne Note activation code.
+                ${escapeHtml(p.companyName)} has issued you a <strong>Perenne Note</strong> activation code.
               </p>
               ${
                 p.customMessage
@@ -91,13 +123,32 @@ If you have questions, reach out to your IT administrator at ${p.companyName}.
                     )}</strong>.</p>`
                   : ''
               }
-              <hr style="border:none;border-top:1px solid #e8e8e0;margin:32px 0;" />
-              <p style="margin:0;font-size:13px;color:#8a8a85;line-height:1.6;">
-                Questions? Contact your IT administrator at ${escapeHtml(
-                  p.companyName
-                )}.
+            </td>
+          </tr>
+          <!-- FOOTER -->
+          <tr>
+            <td style="padding-top:32px;border-top:1px solid #ececec;">
+              <p style="margin:0 0 16px 0;font-size:13px;color:#8a8a85;line-height:1.6;">
+                Questions? Contact your IT administrator at ${escapeHtml(p.companyName)}.
               </p>
-              <p style="margin:24px 0 0 0;font-size:12px;color:#b5b5b0;">— The Perenne team</p>
+              <table role="presentation" cellspacing="0" cellpadding="0" style="margin-top:16px;">
+                <tr>
+                  <td style="padding-right:8px;vertical-align:middle;">
+                    <img
+                      src="${logoSymbolUrl}"
+                      alt=""
+                      width="16"
+                      height="10"
+                      style="display:block;height:10px;width:auto;border:0;outline:0;opacity:0.6;"
+                    />
+                  </td>
+                  <td style="vertical-align:middle;">
+                    <span style="font-size:11px;color:#b5b5b0;font-family:'SF Mono',Menlo,monospace;letter-spacing:0.08em;">
+                      THE PERENNE TEAM
+                    </span>
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
         </table>

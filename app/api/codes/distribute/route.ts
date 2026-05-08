@@ -96,6 +96,10 @@ export async function POST(req: NextRequest) {
   let failed = 0;
   const failures: Array<{ code: string; email: string; reason: string }> = [];
 
+  // v38: build absolute origin for logo URLs in email template (works
+  // on prod, preview deploys, and local dev without manual config).
+  const origin = req.nextUrl.origin;
+
   for (const c of candidates) {
     const email = c.assignedToEmail!;
     const tpl = codeDistributionEmail({
@@ -104,6 +108,7 @@ export async function POST(req: NextRequest) {
       code: c.code,
       expiresLabel: null,
       customMessage: body.customMessage ?? null,
+      origin,
     });
 
     try {
