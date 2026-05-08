@@ -140,13 +140,12 @@ export function DesignsList({ initialDesigns, canEdit }: DesignsListProps) {
                   className="block relative group"
                   aria-label={`Edit ${d.name}`}
                 >
-                  <DesignThumbnail
+                                    <DesignThumbnail
                     backgroundColor={d.backgroundColor}
                     backgroundImageUrl={d.backgroundImageUrl}
-                    primaryAssetUrl={d.primaryAssetUrl}
-                    primaryWatermarkUrl={d.primaryWatermarkUrl}
+                    coverAssets={d.coverAssets}
+                    pageWatermarks={d.pageWatermarks}
                     mode="spread"
-                    width={200}
                   />
                   <div className="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100 transition bg-black/30 flex items-center justify-center">
                     <span className="text-xs font-mono text-white">Edit →</span>

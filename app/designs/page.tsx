@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui';
 import { DesignsList } from '@/components/designs/DesignsList';
 import type { DesignSummaryWithThumb } from '@/components/designs/types';
+import type { CoverAssetRef } from '@/types/cover';
 
 /**
  * /designs — the design library.
@@ -53,21 +54,32 @@ export default async function DesignsPage() {
     },
   });
 
-  // Plain DesignSummary for the client (no Prisma types crossing the wire)
-  const initialDesigns: DesignSummaryWithThumb[] = designs.map((d) => ({
-    id: d.id,
-    name: d.name,
-    isDefault: d.isDefault,
-    isArchived: d.isArchived,
-    previewPngUrl: d.previewPngUrl,
-    backgroundColor: d.backgroundColor,
-    backgroundImageUrl: d.backgroundImageUrl,
-    primaryAssetUrl: extractFirstAssetUrl(d.assetsJson),
-    primaryWatermarkUrl: extractFirstAssetUrl(d.pageWatermarksJson),
-    orderCount: d._count.orders,
-    createdAt: d.createdAt.toISOString(),
-    updatedAt: d.updatedAt.toISOString(),
-  }));
+  // Plain DesignSummary for the client (no Prisma types crossing the wire).
+  // v39: pass the FULL asset arrays so the thumbnail can render every
+  // logo / watermark with its real position/scale/rotation/opacity/invert,
+  // not just the first one. The arrays are small (a few items) so the
+  // payload cost is negligible.
+  const initialDesigns: DesignSummaryWithThumb[] = designs.map((d) => {
+    const coverAssets = extractAssetArray(d.assetsJson);
+    const pageWatermarks = extractAssetArray(d.pageWatermarksJson);
+    return {
+      id: d.id,
+      name: d.name,
+      isDefault: d.isDefault,
+      isArchived: d.isArchived,
+      previewPngUrl: d.previewPngUrl,
+      backgroundColor: d.backgroundColor,
+      backgroundImageUrl: d.backgroundImageUrl,
+      coverAssets,
+      pageWatermarks,
+      // Deprecated but kept until callers migrate away
+      primaryAssetUrl: coverAssets[0]?.url ?? coverAssets[0]?.dataUrl ?? null,
+      primaryWatermarkUrl: pageWatermarks[0]?.url ?? pageWatermarks[0]?.dataUrl ?? null,
+      orderCount: d._count.orders,
+      createdAt: d.createdAt.toISOString(),
+      updatedAt: d.updatedAt.toISOString(),
+    };
+  });
 
   const canEdit = session.role === 'OWNER' || session.role === 'ADMIN' || session.role === 'SUPERADMIN';
 
@@ -96,10 +108,34 @@ export default async function DesignsPage() {
 }
 
 // Pull the first uploaded asset's URL out of the assetsJson blob.
-// Used for thumbnail rendering — lets us show a logo on the card
-// without sending the whole assets array down the wire.
+// Sanitize an assetsJson / pageWatermarksJson value from the DB into a
+// strict CoverAssetRef[] safe to send to the client. Drops any entry
+// without a URL or with malformed coords. Used for thumbnail render
+// fidelity (v39: full snapshot, not just the first asset).
+function extractAssetArray(json: unknown): CoverAssetRef[] {
+  if (!Array.isArray(json)) return [];
+  const out: CoverAssetRef[] = [];
+  for (const raw of json) {
+    if (!raw || typeof raw !== 'object') continue;
+    const r = raw as Record<string, unknown>;
+    const url = typeof r.url === 'string' ? r.url : undefined;
+    const dataUrl = typeof r.dataUrl === 'string' ? r.dataUrl : undefined;
+    if (!url && !dataUrl) continue; // unrenderable
+    const x = typeof r.x === 'number' ? r.x : 0.5;
+    const y = typeof r.y === 'number' ? r.y : 0.5;
+    const scale = typeof r.scale === 'number' ? r.scale : 0.5;
+    const rotation = typeof r.rotation === 'number' ? r.rotation : 0;
+    const opacity = typeof r.opacity === 'number' ? r.opacity : 1;
+    const invert = r.invert === true;
+    const name = typeof r.name === 'string' ? r.name : '';
+    out.push({ name, url, dataUrl, x, y, scale, rotation, opacity, invert });
+  }
+  return out;
+}
+
+// Backwards-compat helper still used by some callers (deprecated, will
+// be removed once everything migrates to extractAssetArray).
 function extractFirstAssetUrl(json: unknown): string | null {
-  if (!Array.isArray(json) || json.length === 0) return null;
-  const first = json[0] as { url?: unknown };
-  return typeof first.url === 'string' ? first.url : null;
+  const arr = extractAssetArray(json);
+  return arr[0]?.url ?? arr[0]?.dataUrl ?? null;
 }
