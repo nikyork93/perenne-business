@@ -9,6 +9,8 @@ import { PerenneLogo } from '@/components/layout/PerenneLogo';
 interface ShellProps {
   children: React.ReactNode;
   companyName?: string;
+  /** v46 — optional company symbol logo, rendered in the workspace badge. */
+  companyLogoUrl?: string | null;
   userEmail?: string;
   isSuperAdmin?: boolean;
 }
@@ -30,18 +32,18 @@ const MAIN_NAV: NavItem[] = [
 const ADMIN_NAV: NavItem[] = [
   { href: '/admin/companies',    label: 'Companies' },
   { href: '/admin/users',        label: 'Users' },
-  { href: '/admin/codes',        label: 'Code batches' },
   { href: '/admin/legacy-codes', label: 'Legacy codes' },
   { href: '/admin/revenue',      label: 'Revenue' },
   { href: '/admin/audit',        label: 'Audit log' },
 ];
 
 const SETTINGS_NAV: NavItem[] = [
-  { href: '/team',     label: 'Team' },
-  { href: '/settings', label: 'Settings' },
+  { href: '/team',             label: 'Team' },
+  { href: '/settings/company', label: 'Company' },
+  { href: '/settings',         label: 'Settings' },
 ];
 
-export function Shell({ children, companyName, userEmail, isSuperAdmin }: ShellProps) {
+export function Shell({ children, companyName, companyLogoUrl, userEmail, isSuperAdmin }: ShellProps) {
   const pathname = usePathname();
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -79,11 +81,21 @@ export function Shell({ children, companyName, userEmail, isSuperAdmin }: ShellP
           </div>
         </div>
 
-        {/* Company badge */}
+        {/* Company badge — v46 shows the logo if present */}
         {companyName && (
           <div className="px-5 py-3 border-b text-[10px]" style={{ borderColor: 'var(--sidebar-border)' }}>
             <div className="text-ink-faint uppercase tracking-[0.2em] mb-1 font-mono">Workspace</div>
-            <div className="text-ink-dim truncate">{companyName}</div>
+            <div className="flex items-center gap-2">
+              {companyLogoUrl && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={companyLogoUrl}
+                  alt={companyName}
+                  className="w-5 h-5 object-contain rounded"
+                />
+              )}
+              <div className="text-ink-dim truncate">{companyName}</div>
+            </div>
           </div>
         )}
 
