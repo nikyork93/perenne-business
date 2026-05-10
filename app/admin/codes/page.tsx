@@ -5,6 +5,7 @@ import { Button, GlassPanel, Badge } from '@/components/ui';
 import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { redirect } from 'next/navigation';
+import { BatchDesignPicker } from '@/components/admin/BatchDesignPicker';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,19 +27,19 @@ export default async function AdminCodesPage() {
   });
 
   const companyIds = Array.from(new Set(batches.map((b) => b.companyId)));
-  const designIds = Array.from(
-    new Set(batches.map((b) => b.designId).filter((d): d is string => !!d))
-  );
-
+  // v45 — load ALL non-archived designs for the companies that have batches,
+  // so the inline picker can offer all options (not just the currently-linked
+  // one). Archived designs are excluded — they'd be confusing to pick from.
   const [companies, designs, statusCounts] = await Promise.all([
     prisma.company.findMany({
       where: { id: { in: companyIds } },
       select: { id: true, name: true, slug: true },
     }),
-    designIds.length > 0
+    companyIds.length > 0
       ? prisma.design.findMany({
-          where: { id: { in: designIds } },
-          select: { id: true, name: true, isArchived: true },
+          where: { companyId: { in: companyIds }, isArchived: false },
+          select: { id: true, name: true, companyId: true, isArchived: true },
+          orderBy: { name: 'asc' },
         })
       : Promise.resolve([]),
     prisma.notebookCode.groupBy({
@@ -50,6 +51,13 @@ export default async function AdminCodesPage() {
 
   const companyMap = new Map(companies.map((c) => [c.id, c]));
   const designMap = new Map(designs.map((d) => [d.id, d]));
+  // Group designs by company for the inline picker options.
+  const designsByCompany = new Map<string, typeof designs>();
+  for (const d of designs) {
+    const arr = designsByCompany.get(d.companyId) ?? [];
+    arr.push(d);
+    designsByCompany.set(d.companyId, arr);
+  }
 
   type StatusBucket = { available: number; claimed: number; revoked: number };
   const statusByKey = new Map<string, StatusBucket>();
@@ -130,11 +138,21 @@ export default async function AdminCodesPage() {
                       <td className="px-4 py-3 text-ink-dim">
                         {b.batchLabel ?? '—'}
                       </td>
-                      <td className="px-4 py-3 text-ink-dim text-xs">
-                        {design ? (
-                          design.name + (design.isArchived ? ' (archived)' : '')
+                      <td className="px-4 py-3 text-xs">
+                        {company ? (
+                          <BatchDesignPicker
+                            companyId={company.id}
+                            batchLabel={b.batchLabel ?? ''}
+                            currentDesignId={b.designId}
+                            currentDesignName={
+                              design
+                                ? design.name + (design.isArchived ? ' (archived)' : '')
+                                : null
+                            }
+                            options={designsByCompany.get(company.id) ?? []}
+                          />
                         ) : (
-                          <span className="text-ink-faint">none</span>
+                          <span className="text-ink-faint">deleted</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-ink font-mono">
