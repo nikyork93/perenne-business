@@ -1,32 +1,27 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { buildDesignSnapshot } from '@/lib/design';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, Design as PrismaDesign } from '@prisma/client';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Vercel Hobby cap is 60s; we set 30s so we fail fast and log clearly
-// instead of getting killed mid-execution.
 export const maxDuration = 30;
 
 /**
- * POST /api/team/[code]/redeem  — v43
+ * POST /api/team/[code]/redeem  — v44
  *
- * v43 changes vs v42:
- *   - Detailed step-by-step logging (visible in Vercel Functions tab).
- *   - Per-query DB timeouts (5s) via Promise.race so a slow/blocked
- *     query can't stall the whole request.
- *   - 404 fast-fail for codes that obviously don't exist before we
- *     even hit Prisma.
- *
- * Status semantics (unchanged):
- *   200 OK            — code valid + first redemption (or idempotent retry)
- *   400 Bad Request   — malformed code
- *   404 Not Found     — no NotebookCode AND no LegacyTeamCode matches
- *   409 Conflict      — NotebookCode already CLAIMED by a different device
- *   410 Gone          — REVOKED / inactive / expired
- *   500 Internal      — DB timeout or unexpected exception (logged)
+ * v44 changes vs v43:
+ *   - Resolves the design from THREE possible sources, in priority:
+ *     1. NotebookCode.design (manual codes from /admin/codes/batch
+ *        with an explicit designId set). Built fresh via
+ *        buildDesignSnapshot at read time.
+ *     2. Order.designSnapshotJson (Stripe codes — frozen at checkout).
+ *     3. Order.design (Stripe codes whose snapshot was never built —
+ *        legacy / pre-Session-3 orders). Built fresh.
+ *   - This means SUPERADMIN-issued batches (orderId=null, designId set
+ *     directly on the code) now correctly return their design payload,
+ *     not just `null`.
  */
 
 const bodySchema = z.object({
@@ -46,11 +41,6 @@ const errorBody = (errorCode: ErrCode, message: string) => ({
   message,
 });
 
-/**
- * Race a Prisma promise against a timeout. If the query takes longer
- * than `ms`, the returned promise rejects with a labelled Error so we
- * can log clearly in Vercel which DB call hung.
- */
 async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -87,15 +77,12 @@ export async function POST(
     );
   }
 
-  // Body parsing — tolerate empty / non-JSON bodies.
   let deviceId: string | undefined;
   try {
     const raw = await req.json();
-    const parsed = bodySchema.parse(raw);
-    deviceId = parsed.deviceId;
+    deviceId = bodySchema.parse(raw).deviceId;
     log(`body ok deviceId=${deviceId ? 'set' : 'none'}`);
   } catch {
-    deviceId = undefined;
     log(`body none`);
   }
 
@@ -103,6 +90,12 @@ export async function POST(
   const ipAddress = xff.split(',')[0]?.trim() || null;
 
   // ─── 1. NotebookCode lookup ─────────────────────────────────────
+  //
+  // We pull all three possible design sources in one query:
+  //   • notebook.design       — direct designId on the code (manual batches)
+  //   • notebook.order.designSnapshotJson — frozen at checkout
+  //   • notebook.order.design — fresh design referenced by the order
+  // The redeemer below picks whichever is present, in that priority.
   log(`looking up NotebookCode`);
   let notebookCode: Awaited<ReturnType<typeof findNotebookCode>>;
   try {
@@ -110,10 +103,7 @@ export async function POST(
     log(`NotebookCode result: ${notebookCode ? 'FOUND status=' + notebookCode.status : 'null'}`);
   } catch (err) {
     log(`NotebookCode query FAILED: ${err instanceof Error ? err.message : String(err)}`);
-    return NextResponse.json(
-      errorBody('server_error', 'Database error. Please retry.'),
-      { status: 500 }
-    );
+    return NextResponse.json(errorBody('server_error', 'Database error.'), { status: 500 });
   }
 
   if (notebookCode) {
@@ -123,13 +113,12 @@ export async function POST(
     }
 
     if (notebookCode.status === 'CLAIMED') {
-      // Idempotency: same deviceId reclaim → echo success
       if (
         deviceId &&
         notebookCode.claimedDeviceId &&
         notebookCode.claimedDeviceId === deviceId
       ) {
-        log(`CLAIMED idempotent retry from same device → 200`);
+        log(`CLAIMED idempotent retry → 200`);
         return NextResponse.json(buildResponseFromNotebookCode(notebookCode, true));
       }
       log(`CLAIMED already → 409`);
@@ -139,7 +128,6 @@ export async function POST(
       );
     }
 
-    // AVAILABLE → claim it
     log(`AVAILABLE → claiming`);
     try {
       await withTimeout(
@@ -158,10 +146,7 @@ export async function POST(
       log(`CLAIMED → 200`);
     } catch (err) {
       log(`update FAILED: ${err instanceof Error ? err.message : String(err)}`);
-      return NextResponse.json(
-        errorBody('server_error', 'Could not claim code. Please retry.'),
-        { status: 500 }
-      );
+      return NextResponse.json(errorBody('server_error', 'Could not claim code.'), { status: 500 });
     }
 
     return NextResponse.json(buildResponseFromNotebookCode(notebookCode, true));
@@ -175,10 +160,7 @@ export async function POST(
     log(`LegacyTeamCode result: ${legacy ? 'FOUND active=' + legacy.isActive : 'null'}`);
   } catch (err) {
     log(`LegacyTeamCode query FAILED: ${err instanceof Error ? err.message : String(err)}`);
-    return NextResponse.json(
-      errorBody('server_error', 'Database error. Please retry.'),
-      { status: 500 }
-    );
+    return NextResponse.json(errorBody('server_error', 'Database error.'), { status: 500 });
   }
 
   if (legacy) {
@@ -194,12 +176,11 @@ export async function POST(
     return NextResponse.json(buildResponseFromLegacyCode(legacy));
   }
 
-  // ─── 3. Not found ───────────────────────────────────────────────
   log(`not found → 404`);
   return NextResponse.json(errorBody('not_found', 'Invalid team code.'), { status: 404 });
 }
 
-// ─── Prisma queries split out so withTimeout can wrap them ──────────
+// ─── Prisma queries ─────────────────────────────────────────────────
 
 function findNotebookCode(code: string) {
   return prisma.notebookCode.findUnique({
@@ -218,10 +199,13 @@ function findNotebookCode(code: string) {
           primaryColor: true,
         },
       },
+      // v44 — direct design link (manual batches via /admin/codes)
+      design: true,
+      // v44 — order's frozen snapshot AND fresh design as fallback
       order: {
         select: {
           designSnapshotJson: true,
-          design: { select: { name: true, isArchived: true } },
+          design: true,
         },
       },
     },
@@ -257,6 +241,49 @@ function findLegacyCode(code: string) {
 
 // ─── Response builders ──────────────────────────────────────────────
 
+/**
+ * Resolve the design payload from one of three sources, in priority:
+ *   1. notebookCode.design — direct link from /admin/codes/batch
+ *   2. order.designSnapshotJson — frozen Stripe checkout snapshot
+ *   3. order.design — fresh design (legacy orders without a snapshot)
+ * Returns null if none of the above carry usable design data.
+ */
+function resolveDesignPayload(n: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  design?: PrismaDesign | null;
+  order?: {
+    designSnapshotJson: Prisma.JsonValue | null;
+    design: PrismaDesign | null;
+  } | null;
+}): { name: string | null; archived: boolean; snapshot: unknown } | null {
+  // 1. Direct designId on the NotebookCode
+  if (n.design) {
+    return {
+      name: n.design.name,
+      archived: n.design.isArchived,
+      snapshot: buildDesignSnapshot(n.design),
+    };
+  }
+  // 2. Frozen Order snapshot
+  const frozen = n.order?.designSnapshotJson;
+  if (frozen) {
+    return {
+      name: n.order?.design?.name ?? null,
+      archived: n.order?.design?.isArchived ?? false,
+      snapshot: frozen,
+    };
+  }
+  // 3. Order's live design
+  if (n.order?.design) {
+    return {
+      name: n.order.design.name,
+      archived: n.order.design.isArchived,
+      snapshot: buildDesignSnapshot(n.order.design),
+    };
+  }
+  return null;
+}
+
 function buildResponseFromNotebookCode(
   n: {
     company: {
@@ -266,14 +293,15 @@ function buildResponseFromNotebookCode(
       logoExtendedUrl: string | null;
       primaryColor: string | null;
     };
-    order: {
+    design?: PrismaDesign | null;
+    order?: {
       designSnapshotJson: Prisma.JsonValue | null;
-      design: { name: string; isArchived: boolean } | null;
+      design: PrismaDesign | null;
     } | null;
   },
   redeemed: boolean
 ) {
-  const snapshot = n.order?.designSnapshotJson ?? null;
+  const design = resolveDesignPayload(n);
   return {
     company: n.company.name,
     logoURL: n.company.logoSymbolUrl,
@@ -282,16 +310,10 @@ function buildResponseFromNotebookCode(
     colors: n.company.primaryColor
       ? { primary: n.company.primaryColor, secondary: null }
       : null,
-    quote: extractQuote(snapshot),
+    quote: extractQuote(design?.snapshot),
     seats: null,
     expires: null,
-    design: snapshot
-      ? {
-          name: n.order?.design?.name ?? null,
-          archived: n.order?.design?.isArchived ?? false,
-          snapshot,
-        }
-      : null,
+    design,
     redeemed,
   };
 }
