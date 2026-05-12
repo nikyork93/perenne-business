@@ -6,27 +6,30 @@ import { requireSession } from '@/lib/auth';
 export const runtime = 'nodejs';
 
 /**
- * POST /api/admin/codes/assign-design  (SUPERADMIN only)
+ * POST /api/admin/codes/assign-design  — v47
  *
- * Assigns a Design to one or more existing NotebookCode records. Used
- * when codes were created without a design (the iOS redeem returned
- * `design: null`) and you want to retroactively link them to a design
- * so the next activation sees the cover/watermarks.
+ * Assign a Design to a single code or to all codes in a batch.
+ *
+ * v47 changes vs v44:
+ *   - Permissions widened: previously SUPERADMIN-only. Now any
+ *     OWNER or ADMIN of the company that owns the codes can also
+ *     reassign their own batches. Customers manage their own
+ *     designs without needing us in the loop.
+ *   - The path lives under /api/admin/codes for backward compat
+ *     (the URL was already wired up by v44/v45 UI) but the
+ *     authorization is per-role-and-scope, not blanket "admin".
  *
  * Body (one of two shapes):
  *   { code: "PRN-XXXX", designId: "..." }              — single code
  *   { batchLabel: "Q4 2026", companyId: "...",
- *     designId: "..." }                                — entire batch
+ *     designId: "..." }                                — whole batch
  *
- * Behaviour:
- *   - Validates the design belongs to the same company as the codes.
- *   - Updates NotebookCode.designId. Does NOT touch Order, so Stripe
- *     codes still respect their frozen designSnapshotJson — we only
- *     update the direct designId, which the redeem route now reads
- *     with first priority (see /api/team/[code]/redeem v44).
- *   - Even already-CLAIMED codes are updated, but iOS won't refetch
- *     them automatically (one-shot rule). New activations see the
- *     new design; old activations keep what they got at claim time.
+ * Authorization rules:
+ *   - SUPERADMIN: can target any company.
+ *   - OWNER / ADMIN: can target ONLY their own company. The endpoint
+ *     verifies that the target code's / batch's companyId matches
+ *     the session companyId.
+ *   - Anyone else: 403.
  */
 
 const singleSchema = z.object({
@@ -44,7 +47,14 @@ const bodySchema = z.union([singleSchema, batchSchema]);
 
 export async function POST(req: NextRequest) {
   const session = await requireSession();
-  if (session.role !== 'SUPERADMIN') {
+
+  // Gate: must be OWNER, ADMIN, or SUPERADMIN. MEMBER and other
+  // roles never reach the design picker UI but we double-check.
+  const isPrivileged =
+    session.role === 'SUPERADMIN' ||
+    session.role === 'OWNER' ||
+    session.role === 'ADMIN';
+  if (!isPrivileged) {
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
@@ -58,7 +68,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Validate design exists + grab its company for scope check
   const design = await prisma.design.findUnique({
     where: { id: body.designId },
     select: { id: true, companyId: true, name: true },
@@ -68,7 +77,6 @@ export async function POST(req: NextRequest) {
   }
 
   if ('code' in body) {
-    // Single code path
     const code = body.code.trim().toUpperCase();
     const target = await prisma.notebookCode.findUnique({
       where: { code },
@@ -76,6 +84,10 @@ export async function POST(req: NextRequest) {
     });
     if (!target) {
       return NextResponse.json({ error: 'Code not found.' }, { status: 404 });
+    }
+    // Company-scope check for non-superadmins
+    if (session.role !== 'SUPERADMIN' && target.companyId !== session.companyId) {
+      return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
     }
     if (target.companyId !== design.companyId) {
       return NextResponse.json(
@@ -90,13 +102,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, updated: 1, designName: design.name });
   }
 
-  // Batch path
+  // Batch path — same checks scaled to company
+  if (session.role !== 'SUPERADMIN' && body.companyId !== session.companyId) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
+  }
   if (body.companyId !== design.companyId) {
     return NextResponse.json(
       { error: 'Design and batch belong to different companies.' },
       { status: 400 }
     );
   }
+
   const result = await prisma.notebookCode.updateMany({
     where: {
       companyId: body.companyId,
