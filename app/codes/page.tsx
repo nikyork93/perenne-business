@@ -136,21 +136,13 @@ export default async function CodesPage() {
                 >
                   <GlassPanel className="p-5 h-full transition-all group-hover:border-accent/40 group-hover:-translate-y-0.5">
                     <div className="space-y-4">
-                      {/* Cover preview strip — design bg color, or neutral */}
-                      <div
-                        className="aspect-[16/6] rounded-lg border border-glass-border relative overflow-hidden"
-                        style={{
-                          background: design?.backgroundColor ?? 'var(--surface-faint)',
-                        }}
-                      >
-                        {!design && (
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="text-[10px] uppercase tracking-[0.2em] text-ink-faint font-mono">
-                              no design
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                      {/* Cover preview strip — shown only when a design is linked. */}
+                      {design && (
+                        <div
+                          className="aspect-[16/6] rounded-lg border border-glass-border relative overflow-hidden"
+                          style={{ background: design.backgroundColor ?? 'var(--surface-faint)' }}
+                        />
+                      )}
 
                       <div>
                         <div className="text-[10px] uppercase tracking-[0.2em] text-ink-faint font-mono mb-1">
