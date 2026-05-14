@@ -44,19 +44,24 @@ export default function LoginPage() {
 
   return (
     <main
-      // Login page always renders against a dark gradient background, so we
-      // force dark text/border tokens regardless of the user's current theme
-      // (otherwise light-mode users see black text on dark glass = invisible).
       data-theme="dark"
       className="min-h-screen flex items-center justify-center p-6 text-ink relative overflow-hidden"
       style={{
+        // Force dark text/ink palette here regardless of the user's
+        // selected theme, because the background is hardcoded dark.
+        // Otherwise a user in light mode lands on a dark gradient with
+        // dark-grey ink and can't see logos or labels.
+        '--text': 'rgba(244, 244, 245, 0.96)',
+        '--text-dim': 'rgba(193, 193, 200, 0.85)',
+        '--text-faint': 'rgba(113, 113, 122, 0.85)',
+        '--glass-border': 'rgba(255, 255, 255, 0.09)',
         background: `
           radial-gradient(ellipse 80% 60% at 20% 20%, rgba(74,122,140,0.30) 0%, transparent 55%),
           radial-gradient(ellipse 70% 50% at 80% 80%, rgba(44,88,104,0.22) 0%, transparent 55%),
           radial-gradient(ellipse 50% 40% at 50% 50%, rgba(90,146,168,0.10) 0%, transparent 60%),
           linear-gradient(180deg, #0a0a0f 0%, #0f0f15 100%)
         `,
-      }}
+      } as React.CSSProperties}
     >
       <div className="relative w-full max-w-sm">
         <Link href="/" className="block mb-10 text-ink">

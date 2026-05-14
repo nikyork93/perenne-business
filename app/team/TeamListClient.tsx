@@ -121,7 +121,7 @@ export function TeamListClient({ companyName, currentUserId, currentUserRole }: 
       </div>
 
       {actionMessage && (
-        <div className={`p-3 rounded-xl text-sm font-mono ${actionMessage.type === 'ok' ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-200' : 'bg-red-400/5 border border-red-400/20 text-red-200'}`}>
+        <div className={`p-3 rounded-xl text-sm font-mono ${actionMessage.type === 'ok' ? 'bg-status-success border border-status-success text-status-success' : 'bg-red-400/5 border border-red-400/20 text-red-200'}`}>
           {actionMessage.type === 'ok' ? '✓' : '⊘'} {actionMessage.msg}
         </div>
       )}
@@ -388,7 +388,7 @@ function statusLabel(status: string): string {
 function statusBadge(status: string): string {
   const base = 'inline-block px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider';
   const colors: Record<string, string> = {
-    active: 'bg-emerald-500/15 text-emerald-200 border border-emerald-500/25',
+    active: 'bg-status-success text-status-success border border-status-success',
     pending: 'bg-yellow-500/15 text-yellow-200 border border-yellow-500/25',
     locked: 'bg-red-500/15 text-red-200 border border-red-500/25',
   };

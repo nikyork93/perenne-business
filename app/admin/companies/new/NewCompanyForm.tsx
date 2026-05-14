@@ -116,7 +116,7 @@ export function NewCompanyForm() {
           </p>
 
           {result.email?.status === 'sent' && (
-            <div className="py-3 px-4 rounded-2xl text-[12px] font-mono border bg-emerald-400/5 border-emerald-400/20 text-emerald-200 mb-4">
+            <div className="py-3 px-4 rounded-2xl text-[12px] font-mono border bg-status-success border-status-success text-status-success mb-4">
               ✓ Magic link sent to <strong>{ownerEmail}</strong>
             </div>
           )}

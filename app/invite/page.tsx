@@ -92,8 +92,13 @@ function InviteContent() {
 
   return (
     <main
+      data-theme="dark"
       className="min-h-screen flex items-center justify-center p-6 text-ink relative overflow-hidden"
       style={{
+        '--text': 'rgba(244, 244, 245, 0.96)',
+        '--text-dim': 'rgba(193, 193, 200, 0.85)',
+        '--text-faint': 'rgba(113, 113, 122, 0.85)',
+        '--glass-border': 'rgba(255, 255, 255, 0.09)',
         background: `
           radial-gradient(ellipse 80% 60% at 20% 20%, rgba(74,122,140,0.30) 0%, transparent 55%),
           radial-gradient(ellipse 70% 50% at 80% 80%, rgba(44,88,104,0.22) 0%, transparent 55%),

@@ -5,6 +5,10 @@ import { Shell } from '@/components/layout/Shell';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { DistributionClient } from '@/components/DistributionClient';
 
+export const metadata = {
+  title: 'Distribution',
+};
+
 export default async function DistributionPage() {
   const session = await requireSession();
   if (!session.companyId) {
@@ -28,6 +32,7 @@ export default async function DistributionPage() {
   return (
     <Shell
       companyName={company?.name}
+      companyLogoUrl={company?.logoSymbolUrl}
       userEmail={session.email}
       isSuperAdmin={session.role === 'SUPERADMIN'}
     >

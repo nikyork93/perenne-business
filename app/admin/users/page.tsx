@@ -5,6 +5,10 @@ import { UsersListClient } from './UsersListClient';
 
 export const dynamic = 'force-dynamic';
 
+export const metadata = {
+  title: 'Users',
+};
+
 export default async function AdminUsersPage() {
   const session = await requireRole('SUPERADMIN');
 

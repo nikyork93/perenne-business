@@ -11,6 +11,10 @@ interface Props {
   searchParams: Promise<{ order_id?: string }>;
 }
 
+export const metadata = {
+  title: 'Order confirmed',
+};
+
 export default async function StoreSuccessPage({ searchParams }: Props) {
   const session = await requireSession();
   if (!session.companyId) {
@@ -39,6 +43,7 @@ export default async function StoreSuccessPage({ searchParams }: Props) {
   return (
     <Shell
       companyName={company?.name}
+      companyLogoUrl={company?.logoSymbolUrl}
       userEmail={session.email}
       isSuperAdmin={session.role === 'SUPERADMIN'}
     >

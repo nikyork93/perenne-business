@@ -1,8 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, useTransition, type FormEvent } from 'react';
-import Image from 'next/image';
+import { useState, type FormEvent } from 'react';
 import { GlassPanel } from '@/components/ui';
 
 type Status = 'idle' | 'saving' | 'saved' | 'error' | 'deleting';
@@ -55,11 +54,8 @@ export function EditCompanyForm({ company }: { company: CompanyData }) {
   const [city, setCity] = useState(company.city ?? '');
   const [zipCode, setZipCode] = useState(company.zipCode ?? '');
   const [primaryColor, setPrimaryColor] = useState(company.primaryColor ?? '#1a1a1a');
-  // v48 — logo URLs are now driven by the uploader widgets, not text inputs.
-  // The state is still kept locally so the preview updates immediately after
-  // an upload completes (without waiting for a router.refresh() round-trip).
-  const [logoExtendedUrl, setLogoExtendedUrl] = useState(company.logoExtendedUrl);
-  const [logoSymbolUrl, setLogoSymbolUrl] = useState(company.logoSymbolUrl);
+  const [logoExtendedUrl, setLogoExtendedUrl] = useState(company.logoExtendedUrl ?? '');
+  const [logoSymbolUrl, setLogoSymbolUrl] = useState(company.logoSymbolUrl ?? '');
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -67,10 +63,6 @@ export function EditCompanyForm({ company }: { company: CompanyData }) {
     setError(null);
 
     try {
-      // Logos are not sent in this PATCH — they're managed separately
-      // via /api/admin/companies/[id]/logo. Keep the field names in
-      // sync with the PATCH endpoint by NOT sending the empty URL
-      // strings that would otherwise blow away a logo set via upload.
       const res = await fetch(`/api/admin/companies/${company.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -78,7 +70,7 @@ export function EditCompanyForm({ company }: { company: CompanyData }) {
           name, slug, legalName, country,
           vatNumber, taxCode, sdiCode, pecEmail,
           address, city, zipCode,
-          primaryColor,
+          primaryColor, logoExtendedUrl, logoSymbolUrl,
         }),
       });
 
@@ -183,34 +175,12 @@ export function EditCompanyForm({ company }: { company: CompanyData }) {
               className={`${inputClass} font-mono`} />
           </div>
         </Field>
-
-        {/*
-          v48 — Logo URL text inputs replaced with proper file uploaders.
-          The customer can also self-serve these via /settings/company; this
-          section is the admin backup when they don't.
-
-          Note: the uploads happen via /api/admin/companies/[id]/logo
-          and update the Company record directly (separate from this
-          form's PATCH). So a logo upload persists immediately, even if
-          the user never hits "Save changes" below. That matches how the
-          customer-side /settings/company form behaves.
-        */}
-        <LogoUploader
-          companyId={company.id}
-          variant="symbol"
-          label="Logo symbol"
-          hint="Square / compact mark. Used in the sidebar and email favicon."
-          currentUrl={logoSymbolUrl}
-          onUploaded={(url) => setLogoSymbolUrl(url)}
-        />
-        <LogoUploader
-          companyId={company.id}
-          variant="extended"
-          label="Logo extended"
-          hint="Wordmark + symbol. Used as the company badge and on iPad welcome."
-          currentUrl={logoExtendedUrl}
-          onUploaded={(url) => setLogoExtendedUrl(url)}
-        />
+        <Field label="Logo extended URL">
+          <input type="url" value={logoExtendedUrl} onChange={(e) => setLogoExtendedUrl(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Logo symbol URL">
+          <input type="url" value={logoSymbolUrl} onChange={(e) => setLogoSymbolUrl(e.target.value)} className={inputClass} />
+        </Field>
       </Section>
 
       {status === 'error' && error && (
@@ -219,7 +189,7 @@ export function EditCompanyForm({ company }: { company: CompanyData }) {
         </div>
       )}
       {status === 'saved' && (
-        <div className="py-3 px-4 rounded-2xl text-[12px] font-mono border bg-emerald-400/5 border-emerald-400/20 text-emerald-200">
+        <div className="py-3 px-4 rounded-2xl text-[12px] font-mono border bg-status-success border-status-success text-status-success">
           ✓ Saved
         </div>
       )}
@@ -275,117 +245,5 @@ function Field({
       </div>
       {children}
     </div>
-  );
-}
-
-// ─── Logo uploader ────────────────────────────────────────────────────
-//
-// Inline rather than a separate component file: this is the only
-// admin-side surface that needs it, and keeping it co-located with the
-// form keeps the dependency graph simple.
-//
-// Endpoint contract: POST /api/admin/companies/[id]/logo with
-//   multipart: variant=symbol|extended, file=binary
-// → 200 { ok: true, url: "<R2 public URL>" }
-// → 4xx { error: "..." }
-function LogoUploader({
-  companyId,
-  variant,
-  label,
-  hint,
-  currentUrl,
-  onUploaded,
-}: {
-  companyId: string;
-  variant: 'symbol' | 'extended';
-  label: string;
-  hint: string;
-  currentUrl: string | null;
-  onUploaded: (url: string) => void;
-}) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [, startTransition] = useTransition();
-  const inputId = `admin-logo-upload-${variant}`;
-
-  async function upload(file: File) {
-    setBusy(true);
-    setErr(null);
-    try {
-      const fd = new FormData();
-      fd.append('variant', variant);
-      fd.append('file', file);
-      const res = await fetch(`/api/admin/companies/${companyId}/logo`, {
-        method: 'POST',
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setErr(data.error ?? `Upload failed (HTTP ${res.status})`);
-        return;
-      }
-      onUploaded(data.url);
-      // Refresh server components (e.g. the sidebar workspace badge)
-      // so the new logo propagates everywhere.
-      startTransition(() => router.refresh());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Network error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Field label={label}>
-      <div className="flex items-center gap-4 p-3 rounded-xl bg-white/[0.02] border border-glass-border">
-        <div
-          className="rounded-lg border border-glass-border bg-white/[0.04] flex items-center justify-center overflow-hidden flex-shrink-0"
-          style={{ width: variant === 'extended' ? 140 : 80, height: 80 }}
-        >
-          {currentUrl ? (
-            <Image
-              src={currentUrl}
-              alt={label}
-              width={variant === 'extended' ? 140 : 80}
-              height={80}
-              className="object-contain max-w-full max-h-full"
-              unoptimized
-            />
-          ) : (
-            <span className="text-[9px] text-ink-faint uppercase tracking-widest">no logo</span>
-          )}
-        </div>
-        <div className="flex-1 min-w-0 space-y-2">
-          <div className="text-[11px] text-ink-faint">{hint}</div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <input
-              id={inputId}
-              type="file"
-              accept="image/png,image/jpeg,image/svg+xml,image/webp"
-              className="hidden"
-              disabled={busy}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void upload(file);
-                e.target.value = '';
-              }}
-            />
-            <label
-              htmlFor={inputId}
-              className={`inline-flex items-center px-3 py-1.5 rounded-md border border-glass-border bg-white/[0.04] text-xs cursor-pointer hover:border-accent/50 transition ${
-                busy ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-            >
-              {busy ? 'Uploading…' : currentUrl ? 'Replace' : 'Upload'}
-            </label>
-            <span className="text-[10px] text-ink-faint">PNG, JPEG, SVG, WebP · max 5MB</span>
-          </div>
-          {err && (
-            <div className="text-[11px] text-red-300 font-mono">⊘ {err}</div>
-          )}
-        </div>
-      </div>
-    </Field>
   );
 }

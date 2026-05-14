@@ -41,6 +41,10 @@ const ACTION_LABEL: Record<string, string> = {
   'team.role_changed':     'Role changed',
 };
 
+export const metadata = {
+  title: 'Dashboard',
+};
+
 export default async function DashboardPage() {
   const session = await requireSession();
 
@@ -104,6 +108,7 @@ export default async function DashboardPage() {
   return (
     <Shell
       companyName={company?.name}
+      companyLogoUrl={company?.logoSymbolUrl}
       userEmail={session.email}
       isSuperAdmin={session.role === 'SUPERADMIN'}
     >
@@ -289,7 +294,7 @@ export default async function DashboardPage() {
                       </Link>
                       <div className="mt-2 flex items-center gap-4 text-ink-dim">
                         <span>{lastDistribution.totalRecipients} recipients</span>
-                        <span className="text-emerald-300">
+                        <span className="text-status-success">
                           {lastDistribution.sentCount} sent
                         </span>
                         {lastDistribution.failedCount > 0 && (
@@ -376,18 +381,18 @@ function OnboardingStep({
     return (
       <Link
         href={href}
-        className="group block p-5 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.04] hover:bg-emerald-400/[0.07] transition-all"
+        className="group block p-5 rounded-2xl border border-status-success bg-status-success hover:bg-status-success transition-all"
       >
         <div className="flex items-center gap-2.5 mb-3">
           <span className="text-xs text-white w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center font-medium">
             ✓
           </span>
-          <div className="text-[11px] font-mono uppercase tracking-widest text-emerald-300/90 font-medium">
+          <div className="text-[11px] font-mono uppercase tracking-widest text-status-success font-medium">
             {title}
           </div>
         </div>
         <p className="text-sm text-ink-dim leading-relaxed mb-4">{description}</p>
-        <span className="text-[11px] text-emerald-300/70 group-hover:text-emerald-300 font-mono uppercase tracking-wider">
+        <span className="text-[11px] text-status-success group-hover:text-status-success font-mono uppercase tracking-wider">
           completed · review
         </span>
       </Link>

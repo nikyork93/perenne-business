@@ -4,12 +4,16 @@ import { requireSession } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Shell } from '@/components/layout/Shell';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { StoreGrid, type StoreDesignOption } from '@/components/StoreGrid';
+import { StoreGrid } from '@/components/StoreGrid';
 import { GlassPanel, Whisper } from '@/components/ui';
 
 interface Props {
   searchParams: Promise<{ cancelled?: string }>;
 }
+
+export const metadata = {
+  title: 'Store',
+};
 
 export default async function StorePage({ searchParams }: Props) {
   const session = await requireSession();
@@ -18,24 +22,7 @@ export default async function StorePage({ searchParams }: Props) {
   }
 
   const companyId = session.companyId;
-
-  // Fetch company + active designs in parallel. Designs are needed for
-  // the picker above the tier grid; users pick which design the codes
-  // they're about to buy will be locked to.
-  const [company, designs] = await Promise.all([
-    prisma.company.findUnique({ where: { id: companyId } }),
-    prisma.design.findMany({
-      where: { companyId, isArchived: false },
-      orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
-      select: { id: true, name: true, isDefault: true },
-    }),
-  ]);
-
-  const designOptions: StoreDesignOption[] = designs.map((d) => ({
-    id: d.id,
-    name: d.name,
-    isDefault: d.isDefault,
-  }));
+  const company = await prisma.company.findUnique({ where: { id: companyId } });
 
   const params = await searchParams;
   const cancelled = params.cancelled === '1';
@@ -43,13 +30,14 @@ export default async function StorePage({ searchParams }: Props) {
   return (
     <Shell
       companyName={company?.name}
+      companyLogoUrl={company?.logoSymbolUrl}
       userEmail={session.email}
       isSuperAdmin={session.role === 'SUPERADMIN'}
     >
       <PageHeader
         eyebrow="Store"
         title="Buy notebook codes"
-        description="Choose a pack and the design to apply. Each code unlocks one branded notebook for one employee — for life."
+        description="Choose a pack. Each code unlocks one branded notebook for one employee — for life."
       />
 
       {cancelled && (
@@ -67,7 +55,7 @@ export default async function StorePage({ searchParams }: Props) {
       )}
 
       <Suspense fallback={<div className="text-ink-faint text-xs">Loading pricing…</div>}>
-        <StoreGrid designs={designOptions} />
+        <StoreGrid />
       </Suspense>
 
       <div className="mt-10 pt-6 border-t border-glass-border text-[11px] text-ink-faint font-mono">

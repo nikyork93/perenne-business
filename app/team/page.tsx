@@ -1,31 +1,8 @@
-import { requireRole } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
-import { Shell } from '@/components/layout/Shell';
-import { TeamListClient } from './TeamListClient';
+import { redirect } from 'next/navigation';
 
-export const dynamic = 'force-dynamic';
-
-export default async function TeamPage() {
-  const session = await requireRole(['OWNER', 'ADMIN', 'VIEWER']);
-
-  const company = session.companyId
-    ? await prisma.company.findUnique({
-        where: { id: session.companyId },
-        select: { name: true },
-      })
-    : null;
-
-  return (
-    <Shell
-      userEmail={session.email}
-      isSuperAdmin={false}
-      companyName={company?.name ?? null}
-    >
-      <TeamListClient
-        companyName={company?.name ?? 'your company'}
-        currentUserId={session.userId}
-        currentUserRole={session.role}
-      />
-    </Shell>
-  );
+// The standalone Team page has been folded into Settings as a tab.
+// Anyone landing on /team is bounced to /settings?tab=users so old
+// bookmarks and emails keep working.
+export default function TeamPage() {
+  redirect('/settings?tab=users');
 }

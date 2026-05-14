@@ -203,7 +203,7 @@ export function SettingsForm({ company, canEditFiscal }: SettingsFormProps) {
         </div>
       )}
       {saved && !error && (
-        <div className="text-[11px] text-emerald-300 font-mono py-2 px-3 bg-emerald-400/5 border border-emerald-400/20 rounded-lg">
+        <div className="text-[11px] text-status-success font-mono py-2 px-3 bg-status-success border border-status-success rounded-lg">
           ✓ Changes saved
         </div>
       )}

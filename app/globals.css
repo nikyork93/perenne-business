@@ -40,7 +40,20 @@
   /* Status */
   --danger:            #ff6b6b;
   --danger-soft:       rgba(255, 107, 107, 0.10);
+  --danger-border:     rgba(255, 107, 107, 0.20);
+  --danger-text:       rgba(254, 202, 202, 0.95);
   --success:           #4ade80;
+  --success-soft:      rgba(74, 222, 128, 0.10);
+  --success-border:    rgba(74, 222, 128, 0.20);
+  --success-text:      rgba(187, 247, 208, 0.95);
+  --warning:           #fbbf24;
+  --warning-soft:      rgba(251, 191, 36, 0.10);
+  --warning-border:    rgba(251, 191, 36, 0.20);
+  --warning-text:      rgba(253, 224, 71, 0.95);
+  --info:              #38bdf8;
+  --info-soft:         rgba(56, 189, 248, 0.10);
+  --info-border:       rgba(56, 189, 248, 0.20);
+  --info-text:         rgba(186, 230, 253, 0.95);
 
   /* Shadows */
   --shadow-card:       0 24px 60px rgba(0, 0, 0, 0.45);
@@ -75,10 +88,25 @@
   --accent-soft:       rgba(74, 122, 140, 0.08);
   --aura-opacity:      0.10; /* less prominent on light bg */
 
-  /* Status */
+  /* Status — darker, saturated tones on the light grey bg so labels
+     read clearly without becoming neon. Text is the darkest variant
+     of each hue; backgrounds stay washed for the pill effect. */
   --danger:            #dc2626;
-  --danger-soft:       rgba(220, 38, 38, 0.08);
-  --success:           #16a34a;
+  --danger-soft:       rgba(220, 38, 38, 0.10);
+  --danger-border:     rgba(220, 38, 38, 0.30);
+  --danger-text:       #991b1b;
+  --success:           #15803d;
+  --success-soft:      rgba(21, 128, 61, 0.10);
+  --success-border:    rgba(21, 128, 61, 0.30);
+  --success-text:      #14532d;
+  --warning:           #b45309;
+  --warning-soft:      rgba(180, 83, 9, 0.10);
+  --warning-border:    rgba(180, 83, 9, 0.30);
+  --warning-text:      #78350f;
+  --info:              #0369a1;
+  --info-soft:         rgba(3, 105, 161, 0.10);
+  --info-border:       rgba(3, 105, 161, 0.30);
+  --info-text:         #075985;
 
   /* Shadows */
   --shadow-card:       0 16px 40px rgba(24, 24, 27, 0.10);
@@ -250,3 +278,25 @@ input[type='range']::-moz-range-thumb {
 ::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--glass-hairline); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ──────────────────────────────────────────────────────────────────────
+   STATUS UTILITY CLASSES
+   Theme-aware drop-in replacements for raw Tailwind `text-emerald-200`,
+   `bg-emerald-400/5` etc. These read from CSS vars defined per theme so
+   labels stay legible on both backgrounds.
+   ────────────────────────────────────────────────────────────────────── */
+.text-status-success { color: var(--success-text); }
+.bg-status-success   { background-color: var(--success-soft); }
+.border-status-success { border-color: var(--success-border); }
+
+.text-status-warning { color: var(--warning-text); }
+.bg-status-warning   { background-color: var(--warning-soft); }
+.border-status-warning { border-color: var(--warning-border); }
+
+.text-status-danger  { color: var(--danger-text); }
+.bg-status-danger    { background-color: var(--danger-soft); }
+.border-status-danger { border-color: var(--danger-border); }
+
+.text-status-info    { color: var(--info-text); }
+.bg-status-info      { background-color: var(--info-soft); }
+.border-status-info  { border-color: var(--info-border); }

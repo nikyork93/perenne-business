@@ -9,8 +9,23 @@ const geist = Geist({ subsets: ['latin'], display: 'swap', variable: '--font-san
 const geistMono = Geist_Mono({ subsets: ['latin'], display: 'swap', variable: '--font-mono' });
 
 export const metadata: Metadata = {
-  title: 'Perenne Business',
+  // Title template lets each page override `title` and have the
+  // resulting <title> automatically suffixed with the brand name,
+  // e.g. "Codes" → "Codes · Perenne Business".
+  title: {
+    default: 'Perenne Business',
+    template: '%s · Perenne Business',
+  },
   description: 'Branded notebooks for your team — Perenne Note B2B portal.',
+  icons: {
+    // Next 15 auto-serves /app/icon.svg, but we declare it
+    // explicitly so older browsers + apple-touch-icon are covered.
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
+    apple: '/icon.svg',
+  },
 };
 
 async function resolveCookieTheme(): Promise<Theme> {

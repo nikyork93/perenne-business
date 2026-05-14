@@ -15,6 +15,10 @@ const ACTION_TONE: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'a
   'code.revoked':          'danger',
 };
 
+export const metadata = {
+  title: 'Audit log',
+};
+
 export default async function AdminAuditPage() {
   const session = await requireRole('SUPERADMIN');
 

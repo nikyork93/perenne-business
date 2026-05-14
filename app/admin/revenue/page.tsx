@@ -5,6 +5,10 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { GlassPanel, Stat } from '@/components/ui';
 import { formatEuros, getTier } from '@/lib/pricing';
 
+export const metadata = {
+  title: 'Revenue',
+};
+
 export default async function AdminRevenuePage() {
   const session = await requireRole('SUPERADMIN');
 

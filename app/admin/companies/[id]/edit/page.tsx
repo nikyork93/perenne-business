@@ -5,6 +5,10 @@ import { Shell } from '@/components/layout/Shell';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { EditCompanyForm } from './EditCompanyForm';
 
+export const metadata = {
+  title: 'Edit company',
+};
+
 export default async function EditCompanyPage({
   params,
 }: {

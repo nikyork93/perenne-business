@@ -44,7 +44,7 @@ export function BatchDetailActions({
           {failedCount} email{failedCount !== 1 ? 's' : ''} failed to send
         </div>
         {flash && (
-          <div className="text-[11px] text-emerald-300 font-mono mt-1">{flash}</div>
+          <div className="text-[11px] text-status-success font-mono mt-1">{flash}</div>
         )}
       </div>
       <Button variant="primary" onClick={handleResend} loading={loading}>

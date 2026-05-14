@@ -3,6 +3,10 @@ import { Shell } from '@/components/layout/Shell';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { NewCompanyForm } from './NewCompanyForm';
 
+export const metadata = {
+  title: 'New company',
+};
+
 export default async function NewCompanyPage() {
   const session = await requireRole('SUPERADMIN');
 

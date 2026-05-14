@@ -2,6 +2,10 @@ import { requireSession } from '@/lib/auth';
 import { GlassPanel } from '@/components/ui';
 import { OnboardingForm } from '@/components/OnboardingForm';
 
+export const metadata = {
+  title: 'Onboarding',
+};
+
 export default async function OnboardingPage() {
   const session = await requireSession();
 

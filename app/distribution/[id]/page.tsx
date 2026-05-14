@@ -19,6 +19,10 @@ const EMAIL_TONE: Record<EmailStatus, 'success' | 'warning' | 'danger' | 'neutra
   BOUNCED: 'danger',
 };
 
+export const metadata = {
+  title: 'Batch',
+};
+
 export default async function DistributionDetailPage({ params }: Props) {
   const { id } = await params;
   const session = await requireSession();

@@ -93,7 +93,7 @@ export function DistributionClient({ availableCodes, batches, companyName }: Pro
         <div
           className={`mb-4 py-2.5 px-4 rounded-lg text-[11px] font-mono border ${
             flash.type === 'ok'
-              ? 'bg-emerald-400/5 border-emerald-400/20 text-emerald-300'
+              ? 'bg-status-success border-status-success text-status-success'
               : 'bg-danger/5 border-danger/20 text-[#ff9a9a]'
           }`}
         >
@@ -197,7 +197,7 @@ export function DistributionClient({ availableCodes, batches, companyName }: Pro
                       </td>
                       <td className="px-4 py-3 font-mono">{b.totalRecipients}</td>
                       <td className="px-4 py-3 font-mono">
-                        <span className="text-emerald-300">{b.sentCount}</span>
+                        <span className="text-status-success">{b.sentCount}</span>
                         {' / '}
                         <span className={b.failedCount > 0 ? 'text-[#ff9a9a]' : 'text-ink-faint'}>
                           {b.failedCount}

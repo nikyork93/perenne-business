@@ -6,6 +6,10 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { GlassPanel, Badge, Whisper } from '@/components/ui';
 import { formatEuros } from '@/lib/pricing';
 
+export const metadata = {
+  title: 'Companies',
+};
+
 export default async function AdminCompaniesPage() {
   const session = await requireRole('SUPERADMIN');
 

@@ -9,7 +9,7 @@ import { PerenneLogo } from '@/components/layout/PerenneLogo';
 interface ShellProps {
   children: React.ReactNode;
   companyName?: string;
-  /** v46 — optional company symbol logo, rendered in the workspace badge. */
+  /** Optional R2 URL for the company's compact symbol logo. */
   companyLogoUrl?: string | null;
   userEmail?: string;
   isSuperAdmin?: boolean;
@@ -22,7 +22,7 @@ interface NavItem {
 
 const MAIN_NAV: NavItem[] = [
   { href: '/dashboard',    label: 'Dashboard' },
-  { href: '/designs',      label: 'Designs' },
+  { href: '/cover',        label: 'Cover' },
   { href: '/codes',        label: 'Codes' },
   { href: '/distribution', label: 'Distribution' },
   { href: '/store',        label: 'Store' },
@@ -30,17 +30,14 @@ const MAIN_NAV: NavItem[] = [
 ];
 
 const ADMIN_NAV: NavItem[] = [
-  { href: '/admin/companies',    label: 'Companies' },
-  { href: '/admin/users',        label: 'Users' },
-  { href: '/admin/legacy-codes', label: 'Legacy codes' },
-  { href: '/admin/revenue',      label: 'Revenue' },
-  { href: '/admin/audit',        label: 'Audit log' },
+  { href: '/admin/companies', label: 'Companies' },
+  { href: '/admin/users',     label: 'Users' },
+  { href: '/admin/revenue',   label: 'Revenue' },
+  { href: '/admin/audit',     label: 'Audit log' },
 ];
 
 const SETTINGS_NAV: NavItem[] = [
-  { href: '/team',             label: 'Team' },
-  { href: '/settings/company', label: 'Company' },
-  { href: '/settings',         label: 'Settings' },
+  { href: '/settings', label: 'Settings' },
 ];
 
 export function Shell({ children, companyName, companyLogoUrl, userEmail, isSuperAdmin }: ShellProps) {
@@ -72,29 +69,49 @@ export function Shell({ children, companyName, companyLogoUrl, userEmail, isSupe
         }}
       >
         {/* Brand — Perenne Note logo extended (original SVG) */}
-        <div className="px-5 py-5 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
+        <div className="px-5 py-6 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
           <Link href="/dashboard" className="block group text-ink hover:text-accent transition-colors">
-            <PerenneLogo variant="extended" height={22} />
+            <PerenneLogo variant="extended" height={28} />
           </Link>
           <div className="mt-2 text-[10px] tracking-[0.22em] uppercase text-ink-faint font-mono">
             Business
           </div>
         </div>
 
-        {/* Company badge — v46 shows the logo if present */}
+        {/* Company badge — bigger, with logo if available. The
+           workspace label sits beside the logo so it reads as the
+           company's identity, not as a generic header. */}
         {companyName && (
-          <div className="px-5 py-3 border-b text-[10px]" style={{ borderColor: 'var(--sidebar-border)' }}>
-            <div className="text-ink-faint uppercase tracking-[0.2em] mb-1 font-mono">Workspace</div>
-            <div className="flex items-center gap-2">
+          <div className="px-5 py-4 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
+            <div className="text-[10px] text-ink-faint uppercase tracking-[0.2em] mb-2 font-mono">
+              Workspace
+            </div>
+            <div className="flex items-center gap-3">
               {companyLogoUrl && (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img
-                  src={companyLogoUrl}
-                  alt={companyName}
-                  className="w-5 h-5 object-contain rounded"
-                />
+                /* Symbol logo: 36px square area with object-contain to
+                   handle any aspect ratio. White background tile so the
+                   logo reads against the sidebar in both themes. */
+                <div
+                  className="flex-shrink-0 w-9 h-9 rounded-md flex items-center justify-center"
+                  style={{
+                    background: 'var(--surface-hover)',
+                    border: '1px solid var(--glass-border)',
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={companyLogoUrl}
+                    alt={`${companyName} logo`}
+                    className="max-w-[28px] max-h-[28px] object-contain"
+                  />
+                </div>
               )}
-              <div className="text-ink-dim truncate">{companyName}</div>
+              <div
+                className="text-[13px] text-ink truncate font-medium leading-tight"
+                title={companyName}
+              >
+                {companyName}
+              </div>
             </div>
           </div>
         )}

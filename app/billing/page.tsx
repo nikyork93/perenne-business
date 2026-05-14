@@ -15,6 +15,10 @@ const STATUS_TONE: Record<OrderStatus, 'success' | 'warning' | 'danger' | 'neutr
   REFUNDED: 'neutral',
 };
 
+export const metadata = {
+  title: 'Billing',
+};
+
 export default async function BillingPage() {
   const session = await requireSession();
   if (!session.companyId) {
@@ -45,6 +49,7 @@ export default async function BillingPage() {
   return (
     <Shell
       companyName={company?.name}
+      companyLogoUrl={company?.logoSymbolUrl}
       userEmail={session.email}
       isSuperAdmin={session.role === 'SUPERADMIN'}
     >
