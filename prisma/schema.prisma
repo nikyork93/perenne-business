@@ -413,6 +413,13 @@ model AuditLog {
 //
 // Holds platform-wide configuration that's not tied to any specific
 // company: bank-transfer coordinates shown to customers + analytics
+// Cache for daily analytics rows pulled from App Store Connect or
+
+
+// ─── Admin settings (singleton) ─────────────────────────────────
+//
+// Holds platform-wide configuration that's not tied to any specific
+// company: bank-transfer coordinates shown to customers + analytics
 // integration credentials. Single row identified by id = "default".
 model AdminSettings {
   id                  String   @id @default("default")
