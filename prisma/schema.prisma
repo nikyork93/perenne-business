@@ -407,11 +407,17 @@ model AuditLog {
 // switches (feature flags, email-from, etc.).
 //
 // Identified by a constant id ("default"). Use the helper in
-// lib/admin-settings.ts to read it.
+
+
+// ─── Admin settings (singleton) ─────────────────────────────────
+//
+// Holds platform-wide configuration that's not tied to any specific
+// company: bank-transfer coordinates shown to customers + analytics
+// integration credentials. Single row identified by id = "default".
 model AdminSettings {
   id                  String   @id @default("default")
 
-  // Bank transfer coordinates shown to customers
+  // Bank transfer coordinates shown to customers at checkout
   bankBeneficiary     String?
   bankAddress         String?
   bankVat             String?
@@ -420,6 +426,35 @@ model AdminSettings {
   bankBic             String?
   bankNotice          String?
 
+  // App Store Connect API credentials (Sales Reports)
+  asc_keyId           String?
+  asc_issuerId        String?
+  asc_privateKey      String?       // P8 private key contents (multi-line PEM)
+  asc_appId           String?       // numeric SKU id, e.g. "6758993077"
+  asc_vendorId        String?       // 8/9-digit vendor id for sales reports
+  asc_lastSyncAt      DateTime?
+
+  // Firebase / GA4 Analytics
+  fb_serviceAccountJson String?
+  fb_propertyId         String?
+  fb_lastSyncAt         DateTime?
+
   updatedAt           DateTime @updatedAt
   updatedByEmail      String?
+}
+
+// Cache for daily analytics rows pulled from App Store Connect or
+// Firebase. Upserted by (source, metric, date) so re-syncing is safe.
+model AnalyticsSnapshot {
+  id          String   @id @default(cuid())
+  source      String   // "asc" | "firebase"
+  metric      String   // "installs" | "revenue" | "dau" | "new_users" | "event_count"
+  date        DateTime @db.Date
+  value       Float
+  currency    String?
+  metadata    Json?
+  fetchedAt   DateTime @default(now())
+
+  @@unique([source, metric, date], name: "source_metric_date")
+  @@index([source, date])
 }

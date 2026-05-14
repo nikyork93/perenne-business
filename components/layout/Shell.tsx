@@ -8,7 +8,7 @@ import { PerenneLogo } from '@/components/layout/PerenneLogo';
 
 interface ShellProps {
   children: React.ReactNode;
-  companyName?: string;
+  companyName?: string | null;
   /** Optional R2 URL for the company's compact symbol logo. */
   companyLogoUrl?: string | null;
   userEmail?: string;
@@ -32,6 +32,7 @@ const MAIN_NAV: NavItem[] = [
 const ADMIN_NAV: NavItem[] = [
   { href: '/admin/companies', label: 'Companies' },
   { href: '/admin/orders',    label: 'Orders' },
+  { href: '/admin/analytics', label: 'Analytics' },
   { href: '/admin/users',     label: 'Users' },
   { href: '/admin/revenue',   label: 'Revenue' },
   { href: '/admin/audit',     label: 'Audit log' },
@@ -70,7 +71,7 @@ export function Shell({ children, companyName, companyLogoUrl, userEmail, isSupe
           backdropFilter: 'blur(40px) saturate(180%)',
         }}
       >
-        {/* Brand — Perenne Note logo extended (original SVG) */}
+        {/* Brand — Perenne Note logo extended */}
         <div className="px-5 py-6 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
           <Link href="/dashboard" className="block group text-ink hover:text-accent transition-colors">
             <PerenneLogo variant="extended" height={28} />
@@ -80,9 +81,7 @@ export function Shell({ children, companyName, companyLogoUrl, userEmail, isSupe
           </div>
         </div>
 
-        {/* Company badge — bigger, with logo if available. The
-           workspace label sits beside the logo so it reads as the
-           company's identity, not as a generic header. */}
+        {/* Company badge — bigger, with logo if available. */}
         {companyName && (
           <div className="px-5 py-4 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
             <div className="text-[10px] text-ink-faint uppercase tracking-[0.2em] mb-2 font-mono">
@@ -90,9 +89,6 @@ export function Shell({ children, companyName, companyLogoUrl, userEmail, isSupe
             </div>
             <div className="flex items-center gap-3">
               {companyLogoUrl && (
-                /* Symbol logo: 36px square area with object-contain to
-                   handle any aspect ratio. White background tile so the
-                   logo reads against the sidebar in both themes. */
                 <div
                   className="flex-shrink-0 w-9 h-9 rounded-md flex items-center justify-center"
                   style={{
@@ -141,7 +137,7 @@ export function Shell({ children, companyName, companyLogoUrl, userEmail, isSupe
           )}
         </nav>
 
-        {/* ── BOTTOM: Theme toggle + User + Logout ─────────────── */}
+        {/* ── BOTTOM: Theme + User + Logout ─────────────── */}
         <div
           className="px-3 py-3 space-y-2 border-t"
           style={{ borderColor: 'var(--sidebar-border)' }}
