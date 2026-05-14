@@ -30,10 +30,12 @@ enum CodeStatus {
 }
 
 enum OrderStatus {
-  PENDING     // checkout started but payment not confirmed yet
-  PAID        // Stripe webhook confirmed payment
-  FAILED      // payment declined
-  REFUNDED    // refund issued
+  PENDING            // checkout started, no payment instructions seen yet
+  AWAITING_PAYMENT   // customer received payment instructions, super-admin waiting for wire
+  PAID               // payment received & codes released
+  FAILED             // payment declined (Stripe legacy)
+  CANCELLED          // super-admin rejected, or customer cancelled
+  REFUNDED           // refund issued
 }
 
 enum PackageType {
@@ -89,8 +91,6 @@ model Company {
   users               User[]
   coverConfigs        CoverConfig[]
   coverAssets         CoverAsset[]
-  designs             Design[]
-  legacyTeamCodes     LegacyTeamCode[]
   orders              Order[]
   notebookCodes       NotebookCode[]
   distributions       DistributionBatch[]
@@ -242,122 +242,6 @@ model CoverAsset {
   @@index([companyId])
 }
 
-// ─── Legacy team codes (manual, not tied to a Stripe Order) ─────
-//
-// Carry-over from the old Cloudflare Worker (api.perenne.app) era —
-// codes like STELVIO2026 that were created by hand from the admin
-// panel for partners, demos, gifts, internal use. After dismissing
-// the Worker, these live in Postgres alongside Stripe-generated
-// codes and resolve via the same /api/team/[code] public endpoint.
-//
-// Differences from NotebookCode:
-//   - No Order, no Stripe payment, no automatic generation
-//   - Optional company link (some demos may not be company-scoped)
-//   - Optional design link (the admin can attach a Design template
-//     so the iOS app gets the full snapshot, OR can fill the legacy
-//     fields manually — useful for one-off codes that don't need
-//     the full editor pipeline)
-//   - Optional expiration (e.g. trade show codes that should die)
-
-model LegacyTeamCode {
-  id                  String    @id @default(cuid())
-  code                String    @unique             // case-insensitive, normalized to uppercase
-  label               String?                       // free-form admin note ("Acme partner", "Stelvio Q4 trade show")
-
-  // Optional company association — if set, the resolved /team/{CODE}
-  // response uses the company's name + branding fields.
-  companyId           String?
-  company             Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
-
-  // Optional design — if set, snapshot's pulled fresh from the
-  // referenced Design at resolve time. NOT a frozen snapshot, since
-  // legacy codes are "live" tied to a template (the admin manages
-  // them as long-running references, not as one-shot purchases).
-  designId            String?
-  design              Design?   @relation(fields: [designId], references: [id], onDelete: SetNull)
-
-  // Manual fallback fields — used if no company / no design or to
-  // override any of them. Mirror TeamBrandConfig (iOS) shape so we
-  // can serve a complete response without joins when needed.
-  manualCompanyName   String?
-  manualLogoUrl       String?
-  manualLogoExtUrl    String?
-  manualLogoWhiteUrl  String?
-  manualPrimaryColor  String?                       // hex
-  manualQuote         String?
-
-  // Lifecycle
-  seats               Int?                          // optional cap, informational only
-  expiresAt           DateTime?                     // null = never expires
-  isActive            Boolean   @default(true)      // soft kill-switch
-
-  createdByEmail      String                        // who in admin created it
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-
-  @@index([code])
-  @@index([companyId])
-  @@index([isActive])
-}
-
-// ─── Designs (library of editable cover/page templates) ─────────
-//
-// A Design is a reusable, editable template owned by a Company. It
-// holds the full editor state (cover assets, background, page
-// watermarks, quote). The company can have many designs and edit
-// them at any time.
-//
-// IMPORTANT: orders DO NOT read from this table directly at fulfilment
-// time. At checkout, the chosen Design is COPIED into the Order's
-// designSnapshotJson, freezing the state. Subsequent edits to the
-// Design therefore never affect already-purchased orders. This is the
-// key invariant that allows e.g. a "Christmas 2026" design and an
-// "Easter 2027" design on the same company without one overwriting
-// the other for codes already in the wild.
-//
-// Relationship to legacy CoverConfig: during the transition period
-// (Sessions 1–3 of the rollout), CoverConfig is kept in sync via
-// dual-write from /api/cover so iOS — which still reads CoverConfig
-// — keeps working. After iOS migrates to read Order.designSnapshotJson
-// (Session 3), CoverConfig writes can be retired.
-
-model Design {
-  id                  String   @id @default(cuid())
-  companyId           String
-  company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  // User-given label (e.g. "Christmas 2026", "Easter 2027", "Default")
-  name                String   @db.VarChar(120)
-
-  // Editor state — same shape as CoverConfig minus the version field
-  backgroundColor     String   @default("#1a1a1a")
-  backgroundImageUrl  String?
-  assetsJson          Json                              // array of CoverAssetRef (cover logos)
-  pageWatermarksJson  Json?                             // array of CoverAssetRef (page watermarks)
-  quoteText           String?
-  quotePosition       String?  @default("bottom")
-  quoteColor          String?  @default("#ffffff")
-
-  // Preview rendered from editor (for thumbnails in the library UI)
-  previewPngUrl       String?
-
-  // Lifecycle
-  isArchived          Boolean  @default(false)          // soft-deleted
-  isDefault           Boolean  @default(false)          // exactly one per company; "current"
-
-  // Relations
-  orders              Order[]                           // orders that snapshotted this design
-  legacyTeamCodes     LegacyTeamCode[]
-  notebookCodes       NotebookCode[]                  // manual codes pointing at this design (live ref)
-
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-
-  @@index([companyId])
-  @@index([companyId, isDefault])
-  @@index([companyId, isArchived])
-}
-
 // ─── Orders & codes ─────────────────────────────────────────────
 
 model Order {
@@ -376,24 +260,22 @@ model Order {
   stripeInvoiceId        String?                    // for PDF invoice download
   stripeInvoiceUrl       String?
 
+  // Manual payment flow (used when Stripe isn't connected): super-admin
+  // approves the order, customer wires the money, super-admin marks PAID
+  // and codes are released. The fields below carry the bank-transfer
+  // metadata shown to the customer in the order confirmation popup and
+  // later on the issued invoice.
+  paymentReference       String?      @unique       // e.g. "PRN-ORD-A1B2C3"
+  customerNote           String?                    // free text from customer at submit time
+  invoiceNumber          String?      @unique       // sequential invoice id once paid
+  invoiceIssuedAt        DateTime?
+  invoiceUrl             String?                    // R2 url to the generated PDF
+  approvedByEmail        String?                    // super-admin who approved
+  approvedAt             DateTime?
+
   status                 OrderStatus  @default(PENDING)
   paidAt                 DateTime?
   refundedAt             DateTime?
-
-  // ── Design lock-in ──────────────────────────────────────────
-  // Both fields nullable for backward compat:
-  // - designId points to the Design template that was chosen at
-  //   checkout. Can be null for orders that pre-date the migration.
-  //   onDelete: SetNull because we typically archive (not delete)
-  //   designs, but if a design is hard-deleted the order keeps its
-  //   immutable snapshot.
-  // - designSnapshotJson holds the FROZEN copy of the design at the
-  //   moment the PENDING order was created. iOS (post-Session-3)
-  //   reads this for the cover/watermarks of redeemed codes. After
-  //   payment is confirmed by the webhook, this snapshot is final.
-  designId               String?
-  design                 Design?      @relation(fields: [designId], references: [id], onDelete: SetNull)
-  designSnapshotJson     Json?
 
   notebookCodes          NotebookCode[]
 
@@ -403,29 +285,15 @@ model Order {
   @@index([companyId])
   @@index([stripePaymentIntentId])
   @@index([status])
-  @@index([designId])
 }
 
 model NotebookCode {
   id                String       @id @default(cuid())
-  code              String       @unique          // PRN-XXXX-XXXX-XXXX or shorter manual format
+  code              String       @unique          // PRN-XXXX-XXXX-XXXX format
   companyId         String
   company           Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  // Stripe-issued codes link to an Order. Manually-created codes
-  // (superadmin batch) leave orderId null.
-  orderId           String?
-  order             Order?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
-
-  // Direct design link — set explicitly for manual codes, OR mirrored
-  // from order.designId for Stripe codes (so the dashboard can show
-  // "which design" without having to join through Order every time).
-  designId          String?
-  design            Design?      @relation(fields: [designId], references: [id], onDelete: SetNull)
-
-  // Batch metadata for manual codes (e.g. "Acme Q1 2026 - 50 codes")
-  batchLabel        String?
-  notes             String?
+  orderId           String
+  order             Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   status            CodeStatus   @default(AVAILABLE)
 
@@ -437,7 +305,6 @@ model NotebookCode {
   // Distribution target (if assigned before claiming)
   assignedToEmail   String?
   assignedToName    String?
-  assignedAt        DateTime?
   distributionId    String?
   distribution      DistributionBatch? @relation(fields: [distributionId], references: [id], onDelete: SetNull)
 
@@ -449,10 +316,8 @@ model NotebookCode {
   @@index([code])
   @@index([companyId])
   @@index([orderId])
-  @@index([designId])
   @@index([status])
   @@index([distributionId])
-  @@index([batchLabel])
 }
 
 // ─── Distribution & email ───────────────────────────────────────
@@ -532,4 +397,29 @@ model AuditLog {
   @@index([actorEmail])
   @@index([action])
   @@index([createdAt])
+}
+// ─── Admin settings ─────────────────────────────────────────────
+//
+// Singleton row holding configuration that's tied to the platform
+// itself (not to any specific company). Right now it stores the bank
+// transfer details shown to customers in the Store popup and on the
+// PDF invoice, but it's the natural home for any future global
+// switches (feature flags, email-from, etc.).
+//
+// Identified by a constant id ("default"). Use the helper in
+// lib/admin-settings.ts to read it.
+model AdminSettings {
+  id                  String   @id @default("default")
+
+  // Bank transfer coordinates shown to customers
+  bankBeneficiary     String?
+  bankAddress         String?
+  bankVat             String?
+  bankName            String?
+  bankIban            String?
+  bankBic             String?
+  bankNotice          String?
+
+  updatedAt           DateTime @updatedAt
+  updatedByEmail      String?
 }

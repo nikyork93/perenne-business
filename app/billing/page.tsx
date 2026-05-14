@@ -8,11 +8,22 @@ import { GlassPanel, Badge, Stat, Whisper, Button } from '@/components/ui';
 import { getTier, formatEuros } from '@/lib/pricing';
 import type { OrderStatus } from '@prisma/client';
 
-const STATUS_TONE: Record<OrderStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
-  PAID: 'success',
-  PENDING: 'warning',
-  FAILED: 'danger',
-  REFUNDED: 'neutral',
+const STATUS_TONE: Record<OrderStatus, 'success' | 'warning' | 'danger' | 'neutral' | 'info'> = {
+  PAID:              'success',
+  PENDING:           'warning',
+  AWAITING_PAYMENT:  'info',
+  FAILED:            'danger',
+  CANCELLED:         'neutral',
+  REFUNDED:          'neutral',
+};
+
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  PAID:              'paid',
+  PENDING:           'pending',
+  AWAITING_PAYMENT:  'awaiting payment',
+  FAILED:            'failed',
+  CANCELLED:         'cancelled',
+  REFUNDED:          'refunded',
 };
 
 export const metadata = {
@@ -45,6 +56,7 @@ export default async function BillingPage() {
     .reduce((sum, o) => sum + o.quantity, 0);
 
   const paidCount = orders.filter((o) => o.status === 'PAID').length;
+  const pendingCount = orders.filter((o) => o.status === 'PENDING' || o.status === 'AWAITING_PAYMENT').length;
 
   return (
     <Shell
@@ -67,7 +79,11 @@ export default async function BillingPage() {
       <div className="grid grid-cols-3 gap-3.5 mb-6">
         <Stat label="Total spent" value={formatEuros(totalSpentCents)} hint={`${paidCount} paid orders`} />
         <Stat label="Codes purchased" value={totalCodesPurchased} hint="lifetime total" />
-        <Stat label="Orders" value={orders.length} hint="all statuses" />
+        <Stat
+          label="Pending"
+          value={pendingCount}
+          hint={pendingCount === 0 ? 'all caught up' : 'awaiting payment or review'}
+        />
       </div>
 
       <GlassPanel padding="none" className="overflow-hidden">
@@ -89,12 +105,14 @@ export default async function BillingPage() {
                   <th className="text-left label px-4 py-3">Codes</th>
                   <th className="text-left label px-4 py-3">Amount</th>
                   <th className="text-left label px-4 py-3">Status</th>
+                  <th className="text-left label px-4 py-3">Reference</th>
                   <th className="text-left label px-4 py-3">Invoice</th>
                 </tr>
               </thead>
               <tbody>
                 {orders.map((o) => {
                   const tier = getTier(o.packageType);
+                  const isPaid = o.status === 'PAID';
                   return (
                     <tr key={o.id} className="border-b border-white/5 hover:bg-white/[0.02]">
                       <td className="px-4 py-3 font-mono text-[11px] text-ink-dim">
@@ -116,12 +134,21 @@ export default async function BillingPage() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge tone={STATUS_TONE[o.status]}>{o.status.toLowerCase()}</Badge>
+                        <Badge tone={STATUS_TONE[o.status]}>{STATUS_LABEL[o.status]}</Badge>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-ink-dim">
+                        {o.paymentReference ?? '—'}
                       </td>
                       <td className="px-4 py-3">
-                        {o.stripeInvoiceUrl ? (
-                          <a href={o.stripeInvoiceUrl} target="_blank" rel="noopener" className="text-accent hover:underline text-[11px]">
-                            View ↗
+                        {isPaid && o.invoiceNumber ? (
+                          <a
+                            href={`/api/orders/${o.id}/invoice?print=1`}
+                            target="_blank"
+                            rel="noopener"
+                            className="text-accent hover:underline text-[11px] font-mono"
+                            title={`Open ${o.invoiceNumber} (Cmd+P to save as PDF)`}
+                          >
+                            {o.invoiceNumber} ↗
                           </a>
                         ) : (
                           <span className="text-ink-faint text-[11px]">—</span>

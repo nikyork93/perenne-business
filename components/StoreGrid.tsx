@@ -1,158 +1,125 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { PackageType } from '@prisma/client';
-import { GlassPanel, Button, Badge, Select, Whisper } from '@/components/ui';
+import { GlassPanel, Button, Badge } from '@/components/ui';
 import { PRICING_TIERS, formatEuros, type PricingTier } from '@/lib/pricing';
 import { cn } from '@/lib/cn';
 
-// Lightweight design summary passed from the server. Mirrors the
-// shape used in /designs but only with what the store actually needs.
-export interface StoreDesignOption {
+interface BankDetails {
+  beneficiary: string;
+  beneficiaryAddress: string;
+  beneficiaryVat: string;
+  bank: string;
+  iban: string;
+  bic: string;
+  notice: string;
+}
+
+interface OrderConfirmation {
   id: string;
-  name: string;
-  isDefault: boolean;
+  packageType: PackageType;
+  quantity: number;
+  totalPriceCents: number;
+  paymentReference: string;
 }
 
-interface StoreGridProps {
-  /**
-   * Active (non-archived) designs available for selection. Order:
-   * default first, then most-recently-updated. The first one is the
-   * pre-selected option.
-   */
-  designs: StoreDesignOption[];
-}
-
-export function StoreGrid({ designs }: StoreGridProps) {
+export function StoreGrid() {
+  const router = useRouter();
+  const [activeTier, setActiveTier] = useState<PricingTier | null>(null);
   const [loadingTier, setLoadingTier] = useState<PackageType | null>(null);
+  const [submitted, setSubmitted] = useState<{ order: OrderConfirmation; bank: BankDetails } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Pre-select the default design if there is one, else the first.
-  // If `designs` is empty (no defaults configured), the first checkout
-  // attempt will surface the server's error message and we link the
-  // user to /designs/new.
-  const [designId, setDesignId] = useState<string>(() => {
-    const def = designs.find((d) => d.isDefault);
-    return def?.id ?? designs[0]?.id ?? '';
-  });
-
-  async function handleCheckout(tier: PricingTier) {
+  function openTier(tier: PricingTier) {
     if (tier.contactSales) {
-      window.location.href =
-        'mailto:business@perenne.app?subject=Scale%20pack%20inquiry';
+      window.location.href = 'mailto:business@perenne.app?subject=Scale%20pack%20inquiry';
       return;
     }
+    setError(null);
+    setSubmitted(null);
+    setActiveTier(tier);
+  }
 
-    setLoadingTier(tier.id);
+  async function placeOrder(customerNote: string) {
+    if (!activeTier) return;
+    setLoadingTier(activeTier.id);
     setError(null);
     try {
       const res = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          packageType: tier.id,
-          // designId is OPTIONAL on the server; if omitted, server
-          // falls back to the company's default. We send it explicitly
-          // when the user picked one in the dropdown so they always
-          // get exactly what's previewed.
-          designId: designId || undefined,
+          packageType: activeTier.id,
+          customerNote: customerNote || undefined,
         }),
       });
-      const ct = res.headers.get('content-type') ?? '';
-      if (!ct.includes('application/json')) {
-        const text = await res.text().catch(() => '');
-        console.error('[checkout] non-JSON response', {
-          status: res.status,
-          bodyPreview: text.slice(0, 300),
-        });
-        setError(`Server returned ${res.status} ${res.statusText}.`);
-        setLoadingTier(null);
-        return;
-      }
       const data = await res.json();
-      if (!res.ok || !data.url) {
-        setError(data.error ?? 'Could not start checkout.');
+      if (!res.ok) {
+        setError(data.error ?? 'Could not place order.');
         setLoadingTier(null);
         return;
       }
-      window.location.href = data.url;
-    } catch (err) {
-      console.error('[checkout] fetch failed', err);
-      setError(err instanceof Error ? err.message : 'Network error');
+      setSubmitted({ order: data.order, bank: data.bank });
+    } catch {
+      setError('Network error. Please try again.');
+    } finally {
       setLoadingTier(null);
     }
   }
 
-  const hasDesigns = designs.length > 0;
+  async function markAsSent() {
+    if (!submitted) return;
+    try {
+      await fetch(`/api/orders/${submitted.order.id}/mark-sent`, { method: 'POST' });
+    } catch {
+      // We don't gate the popup close on this — the wire is what the
+      // super-admin actually checks, so it's fine if the status hint
+      // fails to update.
+    } finally {
+      setSubmitted(null);
+      setActiveTier(null);
+      router.push('/billing');
+    }
+  }
 
   return (
     <>
       {error && (
-        <div className="mb-4 py-2.5 px-4 rounded-lg text-[11px] font-mono border bg-danger/5 border-danger/20 text-[#ff9a9a]">
+        <div className="mb-4 py-2.5 px-4 rounded-lg text-[11px] font-mono border bg-status-danger border-status-danger text-status-danger">
           ✕ {error}
         </div>
       )}
-
-      {/* ── Design picker — sits above the grid ─────────────────── */}
-      <GlassPanel padding="md" animate className="mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-          <div>
-            <Select
-              label="Design for this batch"
-              hint={hasDesigns ? `${designs.length} available` : undefined}
-              value={designId}
-              onChange={(e) => setDesignId(e.target.value)}
-              disabled={!hasDesigns}
-            >
-              {hasDesigns ? (
-                designs.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                    {d.isDefault ? ' · default' : ''}
-                  </option>
-                ))
-              ) : (
-                <option value="">No designs available</option>
-              )}
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            {hasDesigns ? (
-              <Whisper>
-                The codes you buy will be permanently locked to this design.
-                Editing the design later won&apos;t affect them.
-              </Whisper>
-            ) : (
-              <div className="flex items-start gap-3">
-                <Whisper>
-                  You don&apos;t have any designs yet. Create one before
-                  buying codes.
-                </Whisper>
-                <Link href="/designs/new">
-                  <Button variant="primary" size="sm">
-                    + New design
-                  </Button>
-                </Link>
-              </div>
-            )}
-          </div>
-        </div>
-      </GlassPanel>
-
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
         {PRICING_TIERS.map((tier) => (
           <TierCard
             key={tier.id}
             tier={tier}
             loading={loadingTier === tier.id}
-            // Disable purchase if no design is selected (prevents the
-            // server-error-after-Stripe-redirect failure mode).
-            disabled={!hasDesigns && !tier.contactSales}
-            onSelect={() => handleCheckout(tier)}
+            onSelect={() => openTier(tier)}
           />
         ))}
       </div>
+
+      {activeTier && !submitted && (
+        <PlaceOrderDialog
+          tier={activeTier}
+          loading={loadingTier === activeTier.id}
+          onCancel={() => setActiveTier(null)}
+          onConfirm={(note) => placeOrder(note)}
+        />
+      )}
+
+      {submitted && (
+        <PaymentInstructionsDialog
+          order={submitted.order}
+          bank={submitted.bank}
+          tier={PRICING_TIERS.find((t) => t.id === submitted.order.packageType) ?? null}
+          onMarkSent={markAsSent}
+          onClose={() => { setSubmitted(null); setActiveTier(null); }}
+        />
+      )}
     </>
   );
 }
@@ -160,19 +127,20 @@ export function StoreGrid({ designs }: StoreGridProps) {
 function TierCard({
   tier,
   loading,
-  disabled,
   onSelect,
 }: {
   tier: PricingTier;
   loading: boolean;
-  disabled?: boolean;
   onSelect: () => void;
 }) {
   return (
     <GlassPanel
       animate
       padding="lg"
-      className={cn('relative flex flex-col', tier.popular && 'ring-1 ring-accent/30')}
+      className={cn(
+        'relative flex flex-col',
+        tier.popular && 'ring-1 ring-accent/30'
+      )}
     >
       {tier.popular && (
         <div className="absolute -top-2.5 left-5">
@@ -223,10 +191,210 @@ function TierCard({
         variant={tier.popular ? 'primary' : 'default'}
         onClick={onSelect}
         loading={loading}
-        disabled={disabled}
       >
-        {tier.contactSales ? 'Contact sales' : 'Buy pack'}
+        {tier.contactSales ? 'Contact sales' : 'Request pack'}
       </Button>
     </GlassPanel>
+  );
+}
+
+/* ─── Modals ─────────────────────────────────────────────────────── */
+
+function ModalShell({
+  children,
+  onClose,
+  maxWidth = 'max-w-lg',
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+  maxWidth?: string;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className={`${maxWidth} w-full rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto`}
+        style={{
+          background: 'var(--glass-bg-hi)',
+          border: '1px solid var(--glass-border)',
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function PlaceOrderDialog({
+  tier, loading, onCancel, onConfirm,
+}: {
+  tier: PricingTier;
+  loading: boolean;
+  onCancel: () => void;
+  onConfirm: (customerNote: string) => void;
+}) {
+  const [note, setNote] = useState('');
+  return (
+    <ModalShell onClose={onCancel}>
+      <div className="mb-4">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-ink-faint mb-1">
+          Confirm request
+        </div>
+        <h2 className="text-lg font-medium text-ink">
+          {tier.name} pack — {tier.quantity} codes
+        </h2>
+        <p className="mt-1 text-xs text-ink-dim">
+          You'll receive bank transfer instructions on the next step.
+          Codes are released after we receive your wire (usually within
+          one business day).
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-glass-border bg-surface-faint p-4 mb-4">
+        <div className="flex items-baseline justify-between mb-2">
+          <span className="text-xs text-ink-dim">Total</span>
+          <span className="font-display italic text-2xl">{formatEuros(tier.priceCents)}</span>
+        </div>
+        <div className="flex items-baseline justify-between text-[11px] text-ink-faint font-mono">
+          <span>{tier.quantity} codes</span>
+          <span>{formatEuros(tier.pricePerCodeCents)} each</span>
+        </div>
+      </div>
+
+      <label className="block mb-1.5 text-[11px] text-ink-dim font-medium">
+        Note for Perenne (optional)
+      </label>
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        rows={3}
+        placeholder="Anything we should know about this order…"
+        disabled={loading}
+        className="w-full px-4 py-2.5 rounded-xl bg-surface-faint border border-glass-border text-ink text-sm focus:outline-none focus:border-accent/50 transition mb-4"
+      />
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={loading}
+          className="px-4 py-2 rounded-xl border border-glass-border text-ink-dim hover:text-ink hover:border-ink-dim transition text-[12px]"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => onConfirm(note)}
+          disabled={loading}
+          className="flex-1 px-4 py-2 rounded-xl bg-accent text-white hover:bg-accent-bright transition text-[12px] font-medium disabled:opacity-50"
+        >
+          {loading ? 'Creating order…' : 'Get payment instructions →'}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function PaymentInstructionsDialog({
+  order, bank, tier, onMarkSent, onClose,
+}: {
+  order: OrderConfirmation;
+  bank: BankDetails;
+  tier: PricingTier | null;
+  onMarkSent: () => void;
+  onClose: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  function copy(value: string) {
+    navigator.clipboard.writeText(value).catch(() => null);
+  }
+
+  async function handleMark() {
+    setConfirming(true);
+    await onMarkSent();
+    // No setConfirming(false) — onMarkSent navigates away.
+  }
+
+  const Row = ({ label, value, mono }: { label: string; value: string; mono?: boolean }) => (
+    <div className="flex items-start justify-between gap-3 py-2 border-b border-glass-border last:border-b-0">
+      <span className="text-[11px] text-ink-faint font-mono uppercase tracking-widest pt-0.5">{label}</span>
+      <button
+        type="button"
+        onClick={() => copy(value)}
+        title="Click to copy"
+        className={`text-right flex-1 hover:text-accent transition-colors text-ink ${mono ? 'font-mono text-[12px]' : 'text-[13px]'}`}
+      >
+        {value}
+      </button>
+    </div>
+  );
+
+  return (
+    <ModalShell onClose={onClose} maxWidth="max-w-xl">
+      <div className="mb-4">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-ink-faint mb-1">
+          Order placed
+        </div>
+        <h2 className="text-lg font-medium text-ink">
+          Send wire to release your codes
+        </h2>
+        <p className="mt-1 text-xs text-ink-dim">
+          Your {tier?.name ?? order.packageType} pack of {order.quantity} codes is reserved.
+          Send the bank wire using the details below, then click "I sent the wire" so we can
+          start watching for it.
+        </p>
+      </div>
+
+      {/* Order summary */}
+      <div className="rounded-xl border border-glass-border bg-surface-faint p-4 mb-4">
+        <Row label="Reference" value={order.paymentReference} mono />
+        <Row label="Amount" value={formatEuros(order.totalPriceCents)} />
+        <Row label="Quantity" value={`${order.quantity} codes`} />
+      </div>
+
+      {/* Bank details */}
+      <h3 className="text-[10px] font-mono uppercase tracking-widest text-ink-faint mb-2 px-1">
+        Bank transfer details · click to copy
+      </h3>
+      <div className="rounded-xl border border-glass-border bg-surface-faint p-4 mb-4">
+        <Row label="Beneficiary" value={bank.beneficiary} />
+        <Row label="Address"     value={bank.beneficiaryAddress} />
+        <Row label="VAT"         value={bank.beneficiaryVat} mono />
+        <Row label="Bank"        value={bank.bank} />
+        <Row label="IBAN"        value={bank.iban} mono />
+        <Row label="BIC / SWIFT" value={bank.bic} mono />
+      </div>
+
+      <div className="rounded-xl border border-status-warning bg-status-warning text-status-warning p-3 text-[11px] leading-relaxed mb-5">
+        <strong>Important:</strong> use the payment reference{' '}
+        <span className="font-mono">{order.paymentReference}</span> exactly as written
+        in the wire's description. {bank.notice}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={confirming}
+          className="px-4 py-2 rounded-xl border border-glass-border text-ink-dim hover:text-ink hover:border-ink-dim transition text-[12px]"
+        >
+          I'll send later
+        </button>
+        <button
+          type="button"
+          onClick={handleMark}
+          disabled={confirming}
+          className="flex-1 px-4 py-2 rounded-xl bg-accent text-white hover:bg-accent-bright transition text-[12px] font-medium disabled:opacity-50"
+        >
+          {confirming ? 'Submitting…' : 'I sent the wire ✓'}
+        </button>
+      </div>
+    </ModalShell>
   );
 }
