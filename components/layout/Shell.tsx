@@ -72,40 +72,33 @@ export function Shell({ children, companyName, companyLogoUrl, userEmail, isSupe
         }}
       >
         {/* Brand — Perenne Note logo extended */}
-        <div className="px-5 py-6 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
+        <div className="px-5 py-5 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
           <Link href="/dashboard" className="block group text-ink hover:text-accent transition-colors">
-            <PerenneLogo variant="extended" height={28} />
+            <PerenneLogo variant="extended" height={22} />
           </Link>
           <div className="mt-2 text-[10px] tracking-[0.22em] uppercase text-ink-faint font-mono">
             Business
           </div>
         </div>
 
-        {/* Company badge — bigger, with logo if available. */}
+        {/* Company badge — workspace label + name; small inline logo
+           (no background, no frame) if the company configured one. */}
         {companyName && (
-          <div className="px-5 py-4 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
-            <div className="text-[10px] text-ink-faint uppercase tracking-[0.2em] mb-2 font-mono">
+          <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
+            <div className="text-[10px] text-ink-faint uppercase tracking-[0.2em] mb-1.5 font-mono">
               Workspace
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5">
               {companyLogoUrl && (
-                <div
-                  className="flex-shrink-0 w-9 h-9 rounded-md flex items-center justify-center"
-                  style={{
-                    background: 'var(--surface-hover)',
-                    border: '1px solid var(--glass-border)',
-                  }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={companyLogoUrl}
-                    alt={`${companyName} logo`}
-                    className="max-w-[28px] max-h-[28px] object-contain"
-                  />
-                </div>
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={companyLogoUrl}
+                  alt=""
+                  className="flex-shrink-0 max-w-[22px] max-h-[22px] object-contain"
+                />
               )}
               <div
-                className="text-[13px] text-ink truncate font-medium leading-tight"
+                className="text-[12px] text-ink-dim truncate"
                 title={companyName}
               >
                 {companyName}
